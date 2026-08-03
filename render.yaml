@@ -1,0 +1,78 @@
+services:
+  - type: web
+    name: byd-voice-assistant
+    env: php
+    plan: free
+    buildCommand: composer install --no-dev --optimize-autoloader
+    startCommand: vendor/bin/heroku-php-apache2 public/
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_URL
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false
+      - key: DB_CHARSET
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: REDIS_DB
+        sync: false
+      - key: REDIS_TLS
+        sync: false
+      - key: ACCESS_TOKEN_TTL
+        sync: false
+      - key: REFRESH_TOKEN_TTL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_TTL
+        sync: false
+      - key: VAPI_WEBHOOK_SECRET
+        sync: false
+      - key: VAPI_PUBLIC_KEY
+        sync: false
+      - key: VAPI_ASSISTANT_ID
+        sync: false
+      - key: RATE_LIMIT_MAX
+        sync: false
+      - key: RATE_LIMIT_WINDOW
+        sync: false
+      - key: QUEUE_SLEEP
+        sync: false
+      - key: QUEUE_MAX_ATTEMPTS
+        sync: false
+      - key: CAPTCHA_PROVIDER
+        sync: false
+      - key: CAPTCHA_SECRET
+        sync: false
+      - key: COOKIE_DOMAIN
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VAPI_WEBHOOK_URL
+        sync: false
+      - key: GREENAPI_ID_INSTANCE
+        sync: false
+      - key: GREENAPI_API_TOKEN
+        sync: false
+      - key: GREENAPI_API_URL
+        sync: false
+      - key: GREENAPI_WEBHOOK_TOKEN
+        sync: false

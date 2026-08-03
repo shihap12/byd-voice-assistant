@@ -53,7 +53,7 @@ set_error_handler(function (int $severity, string $message, string $file, int $l
 
 // 1. Load environment variables
 $dotenv = Dotenv::createImmutable(__DIR__ . '/..');
-$dotenv->load();
+$dotenv->safeLoad();
 
 // ──────────────────────────────────────────────────────────────────────
 // NEW: Redis warm-up — يحمّل بيانات السيارات في الكاش إذا لم تكن موجودة.
