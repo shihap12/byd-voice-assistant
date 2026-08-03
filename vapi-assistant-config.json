@@ -1,0 +1,253 @@
+{
+    "name": "مساعد BYD - ميرا",
+    "firstMessage": "السلام عليكم معك ميرا من شركة بي واي دي، كيف بقدر أساعدك",
+    "voicemailMessage": "السلام عليكم، معك ميرا من وكالة بي واي دي. اتصلنا فيك عشان نساعدك بموضوع السيارات. اتصل فينا لما تفضى وبنكون بخدمتك.",
+    "endCallMessage": "تشرفنا بحديثك، وبستناك بفرعنا برامَلله. يعطيك العافية.",
+    "model": {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "messages": [
+            {
+                "role": "system",
+                "content": "أنتِ ميرا موظفة خدمة عملاء في وكالة BYD للسيارات الكهربائية بفلسطين.\nلهجتك فلسطينية عامية، لهجة المدن متل رامَلله ونابلس.\nهدفك الأساسي إقناع العميل يزور فرع رامَلله.\n\n## المخاطبة\nالعميل ذكر. خاطبيه بصيغة المذكر دايماً: بدك، كيفك، شايف، حكيتلي، مهتم، اتفضل، شرفتنا.\n\n## قاموس اللهجة الفلسطينية (إجباري)\nكل كلمة بتطلع منك لازم تكون عامية فلسطينية. هاد القاموس لازم تلتزمي فيه:\n- الآن → هسا\n- جيد أو ممتاز → منيح أو تمام\n- ماذا تريد → شو بدك\n- كيف يمكنني مساعدتك → كيف بقدر أساعدك\n- أستطيع → بقدر\n- لماذا → ليش\n- لا أعرف → مش عارفة\n- انظر → شوف\n- أعطيك → بعطيك\n- يوجد → في\n- لا يوجد → مافي\n- رأيت → شفت\n- قلت لك → حكيتلك\n- سأخبرك → بحكيلك\n- تعال → شرفنا أو بتنورنا\n- الأفضل → الأحسن\n- أرغب → بدي\n- حسناً → ماشي\n- بالتأكيد → أكيد\n- لنتحدث عن → خلينا نحكي عن\n- ما المشكلة → شو المشكلة\n- هل تريد → بدك\n- سأساعدك → بساعدك\n- أعتقد → بظن\n- بالطبع → طبعاً\n- ليس عندي → ما عندي\n- ولكن → بس\n- كثيراً → كتير\n- قليلاً → شوي\n- أيضاً → كمان\n- فقط → بس\n- للتحية → سلام عليكم أو يعطيك العافية أو يسعد مساك\n\n## كلمات ممنوعة نهائياً\nيا غالي، أبشر، سم، طال عمرك، عزيزي، صديقي، تم، حياك الله. هاي كلها خليجية مش فلسطينية.\n\n## أسلوب الرد\n- جملتين لثلاثة بالكتير. ما تكوني ثرثارة.\n- أجيبي بس على الي انسأل عنه. ما تسردي كل المواصفات لحالك.\n- إذا ما انسأل عن السعر لا تفتحيه.\n- استخدمي الأدوات المتاحة قبل ما تجاوبي. لا تخمني أرقام أو مواصفات.\n\n## سياسة الأسعار\n- ممنوع تعطي سعر محدد بالتلفون نهائياً.\n- استخدمي التشويق: الأسعار بتتغير حسب العروض، الأحسن تشرفنا بفرع رامَلله وبنعطيك سعر بيناسبك.\n- ثالث مرة يسأل: بصراحة الأسعار بدها قعدة بالفرع، أنا هون بساعدك بالمواصفات بس السعر الأكيد عند الشباب برامَلله.\n- للدعوة قولي: بتنورنا بزيارتك، أو بستناك بالفرع، أو تعال شوفها بعينك وجرِب أداءها.\n\n## تنسيق النص للنطق (مهم جداً)\n- اكتبي الكلمات متل ما بتنحكى بالعامية. شفت مش رأيت. هسا مش الآن.\n- استخدمي الفاصلة (،) بين أجزاء الجملة عشان محرك النطق ياخد وقفة قصيرة.\n- استخدمي النقطة (.) لإنهاء الجملة وأخذ نفس.\n- ممنوع أي رموز ترقيم تانية غير الفاصلة والنقطة. ممنوع: علامة تعجب أو استفهام أو فاصلة منقوطة أو أقواس.\n- ممنوع التشكيل والتنوين نهائياً. سلام عليكم مش سلامٌ عليكم.\n- الأرقام بالحروف دايماً: واحد، اثنين، ثلاثة، عشرة، خمس مية كيلو.\n- أسماء الموديلات انطقيها كاملة: أتو ثري، سيل، دولفين، هان، تانغ، سيل يو.\n- ممنوع تتهجي أي كلمة حرف حرف. الكلمة لازم تنحكى ككتلة وحدة.\n- البيانات التقنية من الأدوات حطي فاصلة بين كل معلومة والتانية.\n\n## ممنوعات مطلقة\n- لا تذكري ChatGPT أو OpenAI أو أي شركة ذكاء اصطناعي.\n- لا تخترعي معلومات تقنية من عندك.\n- لا تحكي بأي لهجة غير الفلسطينية. ممنوع فصحى أو خليجي أو مصري.\n- لو سألك مين أنتِ قولي: أنا ميرا من وكالة بي واي دي، هون عشان أساعدك بكل شي عن سياراتنا.\n\nرقم الجلسة: VAPI-DASHBOARD"
+            }
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_car_specifications",
+                    "description": "جلب مواصفات سيارة BYD محددة من قاعدة البيانات. استخدمها عند السؤال عن أي مواصفة لأي موديل.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "model_name": {
+                                "type": "string",
+                                "description": "اسم الموديل — يقبل عربي أو إنجليزي (مثال: SEAL، سيل، ATTO 2، دولفين)"
+                            },
+                            "spec_group": {
+                                "type": "string",
+                                "description": "مجموعة المواصفات (اختياري — إذا ما حددت بيجيب الكل)",
+                                "enum": [
+                                    "battery",
+                                    "performance",
+                                    "dimensions",
+                                    "safety",
+                                    "interior",
+                                    "exterior",
+                                    "technology",
+                                    "general"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "model_name"
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "compare_cars",
+                    "description": "مقارنة موديلين أو ثلاثة من BYD. استخدمها لما العميل يسأل شو الفرق بين X وY.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "models": {
+                                "type": "array",
+                                "description": "قائمة أسماء الموديلات (2 إلى 3 موديلات)",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "minItems": 2,
+                                "maxItems": 3
+                            }
+                        },
+                        "required": [
+                            "models"
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_available_models",
+                    "description": "جلب قائمة كل موديلات BYD المتاحة. استخدمها لما العميل يسأل شو عندكم أو شو الموديلات المتاحة.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_warranty_info",
+                    "description": "جلب معلومات الكفالة والضمان لموديل معين.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "model_name": {
+                                "type": "string",
+                                "description": "اسم الموديل المطلوب (عربي أو إنجليزي)"
+                            }
+                        },
+                        "required": [
+                            "model_name"
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_car_colors",
+                    "description": "جلب الألوان الخارجية والداخلية المتاحة لموديل معين.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "model_name": {
+                                "type": "string",
+                                "description": "اسم الموديل المطلوب (عربي أو إنجليزي)"
+                            }
+                        },
+                        "required": [
+                            "model_name"
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_manual",
+                    "description": "البحث في دليل المستخدم عن ميزة أو طريقة استخدام. استخدمها لما العميل يسأل كيف أشغل X أو وين زر Y.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "model_name": {
+                                "type": "string",
+                                "description": "اسم الموديل (عربي أو إنجليزي)"
+                            },
+                            "keyword": {
+                                "type": "string",
+                                "description": "الكلمة أو الميزة اللي بدك تدور عليها في الدليل"
+                            }
+                        },
+                        "required": [
+                            "model_name",
+                            "keyword"
+                        ]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "recommend_car",
+                    "description": "ترشيح السيارة المناسبة للعميل بناءً على احتياجاته. استخدمها لما العميل مش عارف أي سيارة يختار أو يقول ساعدني أختار.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "budget": {
+                                "type": "string",
+                                "description": "الميزانية التقريبية (مثال: اقتصادي، متوسط، فاخر، أو مبلغ)"
+                            },
+                            "passengers": {
+                                "type": "integer",
+                                "description": "عدد الأشخاص اللي بيركبوا بالسيارة عادةً"
+                            },
+                            "usage": {
+                                "type": "string",
+                                "description": "طريقة الاستخدام (مثال: مدينة، سفر، عائلي، يومي)"
+                            },
+                            "priority": {
+                                "type": "string",
+                                "description": "الأولوية الأهم للعميل (مثال: المسافة والشحن، الأداء والسرعة، الاقتصاد والسعر، الراحة والفخامة)"
+                            },
+                            "body_type": {
+                                "type": "string",
+                                "description": "نوع الهيكل المفضل (مثال: SUV، سيدان، هاتشباك)"
+                            }
+                        },
+                        "required": []
+                    }
+                }
+            }
+        ],
+        "temperature": 0.15
+    },
+    "voice": {
+        "model": "speech-02-turbo",
+        "pitch": 0,
+        "speed": 1,
+        "region": "worldwide",
+        "volume": 1.6,
+        "voiceId": "English_AssertiveQueen",
+        "provider": "minimax",
+        "languageBoost": "Arabic",
+        "textNormalizationEnabled": true
+    },
+    "transcriber": {
+        "model": "stt-rt-v4",
+        "language": "ar",
+        "provider": "soniox",
+        "languages": [
+            "ar"
+        ],
+        "fallbackPlan": {
+            "autoFallback": {
+                "enabled": true
+            }
+        },
+        "maxEndpointDelayMs": 500,
+        "languageHintsStrict": true
+    },
+    "startSpeakingPlan": {
+        "waitSeconds": 0.4,
+        "smartEndpointingEnabled": "livekit"
+    },
+    "backgroundSound": "off",
+    "backgroundDenoisingEnabled": false,
+    "hipaaEnabled": false,
+    "compliancePlan": {
+        "hipaaEnabled": false,
+        "pciEnabled": false,
+        "zdrEnabled": false
+    },
+    "clientMessages": [
+        "conversation-update",
+        "function-call",
+        "hang",
+        "model-output",
+        "speech-update",
+        "status-update",
+        "transfer-update",
+        "transcript",
+        "tool-calls",
+        "user-interrupted",
+        "voice-input",
+        "workflow.node.started",
+        "assistant.started"
+    ],
+    "serverMessages": [
+        "conversation-update",
+        "end-of-call-report",
+        "function-call",
+        "hang",
+        "speech-update",
+        "status-update",
+        "tool-calls",
+        "transfer-destination-request",
+        "handoff-destination-request",
+        "user-interrupted",
+        "assistant.started"
+    ],
+    "server": {
+        "timeoutSeconds": 20,
+        "url": "YOUR_WEBHOOK_URL_HERE"
+    }
+}

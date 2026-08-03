@@ -1,0 +1,32 @@
+config:
+  target: "http://localhost:8080" # Update this if your target is deployed elsewhere
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      rampTo: 50
+      name: "Ramp up load"
+  # Default headers, can be extended for other endpoints needing Auth
+  defaults:
+    headers:
+      Content-Type: "application/json"
+
+scenarios:
+  - name: "Session Initialization Load Test"
+    flow:
+      - post:
+          url: "/api/init-session"
+          json:
+            captcha_token: "load-test-bypass-token"
+          # Capture the session_id or csrf_token from the response if needed for subsequent steps
+          capture:
+            - json: "$.session_id"
+              as: "sessionId"
+            - json: "$.csrf_token"
+              as: "csrfToken"
+      
+      # Optional: Example of hitting an authorized endpoint using the captured cookie/token
+      # - post:
+      #     url: "/api/vapi-auth"
+      #     headers:
+      #       X-CSRF-Token: "{{ csrfToken }}"
+      #       # Note: The JWT cookie set by the previous response will be automatically handled by Artillery
