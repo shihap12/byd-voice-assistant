@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-install pdo_mysql mysqli zip gd \
     && pecl install redis \
     && docker-php-ext-enable redis \
-    && a2enmod rewrite \
+    && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 
 RUN sed -i "/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/" /etc/apache2/apache2.conf
