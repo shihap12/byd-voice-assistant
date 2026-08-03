@@ -30,6 +30,7 @@ use BYD\Security\Security;
 // يضمن إن أي خطأ غير متوقع (مثل انقطاع الاتصال بـ MySQL) يرجع JSON نظيف
 // بدل HTML خام يكسر الـ frontend.
 set_exception_handler(function (Throwable $e): void {
+    error_log('[FATAL] ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     if (!headers_sent()) {
         http_response_code(503);
         header('Content-Type: application/json');
