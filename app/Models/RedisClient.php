@@ -198,7 +198,7 @@ return {1, math.floor(tokens)}
 LUA;
 
         try {
-            $res = $this->client->eval($lua, [$key, $maxTokens, $refillRate, $now, $windowSeconds * 2], 1);
+            $res = $this->client->eval($lua, 1, $key, $maxTokens, $refillRate, $now, $windowSeconds * 2);
             if (is_array($res)) {
                 $allowed   = (int) ($res[0] ?? 0) === 1;
                 $remaining = max(0, (int) ($res[1] ?? 0));
