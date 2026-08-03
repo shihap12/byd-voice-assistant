@@ -3,8 +3,6 @@ services:
     name: byd-voice-assistant
     runtime: docker
     plan: free
-    buildCommand: composer install --no-dev --optimize-autoloader
-    startCommand: vendor/bin/heroku-php-apache2 public/
     envVars:
       - key: APP_ENV
         value: production
