@@ -1,7 +1,7 @@
 services:
   - type: web
     name: byd-voice-assistant
-    env: php
+    runtime: docker
     plan: free
     buildCommand: composer install --no-dev --optimize-autoloader
     startCommand: vendor/bin/heroku-php-apache2 public/
