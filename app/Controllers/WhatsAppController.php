@@ -379,15 +379,16 @@ if (!empty($latestImages['images'])) {
                 $argsForReplay = new \stdClass();
             }
 
-            $modelPart = [
-                'functionCall' => [
-                    'name' => $fnName,
-                    'args' => $argsForReplay,
-                ],
-            ];
-            if ($thoughtSignature !== null) {
-                $modelPart['thoughtSignature'] = $thoughtSignature;
-            }
+           $modelPart = [
+    'functionCall' => [
+        'name' => $fnName,
+        'args' => $argsForReplay,
+    ],
+    // Gemini 3 بيطلب thoughtSignature إلزامياً بكل functionCall — لو الموديل
+    // ما رجعهاش (بيصير أحياناً بـ flash-lite)، بنحط placeholder ثابت بدل
+    // ما نتركها فاضية، لأنه غيابها بيسبب 400 INVALID_ARGUMENT.
+    'thoughtSignature' => $thoughtSignature ?? 'context_engine_is_ok_to_proceed_without_signature',
+];
 
             $contents[] = ['role' => 'model', 'parts' => [$modelPart]];
             $contents[] = [
