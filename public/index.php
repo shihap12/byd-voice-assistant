@@ -127,6 +127,10 @@ $router->add('POST', '/api/chat', function (): void {
     (new \BYD\Controllers\ChatController())->handle();
 });
 
+$router->add('GET', '/api/session-images', function (): void {
+    (new \BYD\Controllers\ChatController())->apiGetSessionImages();
+});
+
 $router->add('GET', '/login/admin', function (): void {
     (new AdminController())->showLogin();
 });

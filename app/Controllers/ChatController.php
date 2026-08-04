@@ -246,4 +246,29 @@ final class ChatController
 
         return json_decode($response, true) ?? [];
     }
+
+    public function apiGetSessionImages(): void
+{
+    $session = AuthMiddleware::getSession();
+    if (!$session) {
+        Security::jsonError('Unauthorized', 401);
+    }
+    $sessionId = $session->session_id;
+
+    $context = $this->redis->getContext($sessionId) ?? [];
+    $latestImages = $context['latest_images'] ?? null;
+
+    if ($latestImages && !empty($latestImages['images'])) {
+        unset($context['latest_images']);
+        $this->redis->setContext($sessionId, $context, 1800);
+    }
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success'    => true,
+        'images'     => $latestImages['images'] ?? null,
+        'car_model'  => $latestImages['model_name'] ?? null,
+    ], JSON_UNESCAPED_UNICODE);
+}
+
 }
