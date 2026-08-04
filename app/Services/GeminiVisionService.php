@@ -859,7 +859,8 @@ PROMPT;
         $redis->delete("car:trims:{$hash}");
         $redis->delete('car:all_models');
         $redis->delete('warmup:done');
-
+        $redis->delete('cache:admin:cars');
+        
         error_log("[GeminiVision] Cache cleared for car_id={$carId}");
     }
 
