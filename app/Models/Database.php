@@ -11,6 +11,10 @@ use RuntimeException;
 /**
  * Database - Singleton PDO wrapper
  * Thread-safe connection pool simulation with reconnect logic
+ *
+ * تعديل: إلغاء SELECT 1 قبل كل استعلام (كان بيضاعف الرحلات لقاعدة البيانات).
+ * هلق كل دالة بتحاول تنفذ الاستعلام مباشرة، ولو فشل بسبب انقطاع اتصال
+ * (PDOException) بتعيد الاتصال مرة وحدة بس وتعيد المحاولة.
  */
 final class Database
 {
@@ -21,35 +25,37 @@ final class Database
     {
         $this->connect();
     }
-private function connect(): void
-{
-    $host    = $_ENV['DB_HOST']    ?? '127.0.0.1';
-    $port    = $_ENV['DB_PORT']    ?? '3306';
-    $dbname  = $_ENV['DB_NAME']    ?? 'byd_voice';
-    $user    = $_ENV['DB_USER']    ?? 'root';
-    $pass    = $_ENV['DB_PASS']    ?? '';
-    $charset = $_ENV['DB_CHARSET'] ?? 'utf8mb4';
 
-    $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset={$charset}";
+    private function connect(): void
+    {
+        $host    = $_ENV['DB_HOST']    ?? '127.0.0.1';
+        $port    = $_ENV['DB_PORT']    ?? '3306';
+        $dbname  = $_ENV['DB_NAME']    ?? 'byd_voice';
+        $user    = $_ENV['DB_USER']    ?? 'root';
+        $pass    = $_ENV['DB_PASS']    ?? '';
+        $charset = $_ENV['DB_CHARSET'] ?? 'utf8mb4';
 
-    $options = [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-        PDO::ATTR_PERSISTENT         => false,
-        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci",
-        PDO::ATTR_TIMEOUT            => 5,
-        // NEW: TiDB Cloud بيرفض أي اتصال بدون TLS
-        PDO::MYSQL_ATTR_SSL_CA                 => '/etc/ssl/certs/ca-certificates.crt',
-        PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
-    ];
+        $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset={$charset}";
 
-    try {
-        $this->connection = new PDO($dsn, $user, $pass, $options);
-    } catch (PDOException $e) {
-        throw new RuntimeException('Database connection failed: ' . $e->getMessage());
+        $options = [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+            PDO::ATTR_PERSISTENT         => false,
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci",
+            PDO::ATTR_TIMEOUT            => 5,
+            // TiDB Cloud بيرفض أي اتصال بدون TLS
+            PDO::MYSQL_ATTR_SSL_CA                 => '/etc/ssl/certs/ca-certificates.crt',
+            PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
+        ];
+
+        try {
+            $this->connection = new PDO($dsn, $user, $pass, $options);
+        } catch (PDOException $e) {
+            throw new RuntimeException('Database connection failed: ' . $e->getMessage());
+        }
     }
-}
+
     public static function getInstance(): self
     {
         if (self::$instance === null) {
@@ -58,14 +64,12 @@ private function connect(): void
         return self::$instance;
     }
 
+    /**
+     * ملاحظة: عدنا نرجع الاتصال مباشرة بدون فحص SELECT 1.
+     * فحص صحة الاتصال هلق بيصير فقط عند فشل فعلي (catch)، مش قبل كل استعلام.
+     */
     public function getConnection(): PDO
     {
-        // Reconnect if connection lost (long-running workers)
-        try {
-            $this->connection->query('SELECT 1');
-        } catch (PDOException) {
-            $this->connect();
-        }
         return $this->connection;
     }
 
@@ -74,9 +78,16 @@ private function connect(): void
      */
     public function query(string $sql, array $params = []): array
     {
-        $stmt = $this->getConnection()->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll();
+        try {
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll();
+        } catch (PDOException $e) {
+            $this->connect(); // إعادة الاتصال مرة وحدة بس لو فعلاً انقطع
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll();
+        }
     }
 
     /**
@@ -84,9 +95,16 @@ private function connect(): void
      */
     public function execute(string $sql, array $params = []): int
     {
-        $stmt = $this->getConnection()->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->rowCount();
+        try {
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->rowCount();
+        } catch (PDOException $e) {
+            $this->connect();
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->rowCount();
+        }
     }
 
     /**
@@ -94,9 +112,16 @@ private function connect(): void
      */
     public function queryOne(string $sql, array $params = []): array|false
     {
-        $stmt = $this->getConnection()->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetch();
+        try {
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetch();
+        } catch (PDOException $e) {
+            $this->connect();
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetch();
+        }
     }
 
     /**
@@ -104,22 +129,22 @@ private function connect(): void
      */
     public function lastInsertId(): string
     {
-        return $this->getConnection()->lastInsertId();
+        return $this->connection->lastInsertId();
     }
 
     public function beginTransaction(): void
     {
-        $this->getConnection()->beginTransaction();
+        $this->connection->beginTransaction();
     }
 
     public function commit(): void
     {
-        $this->getConnection()->commit();
+        $this->connection->commit();
     }
 
     public function rollback(): void
     {
-        $this->getConnection()->rollBack();
+        $this->connection->rollBack();
     }
 
     // Prevent cloning/unserialization of singleton

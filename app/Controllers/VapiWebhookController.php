@@ -455,46 +455,59 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
     /**
      * يستدعي Gemini API لقراءة الشات النصي السابق وتوليد رسالة ترحيبية مخصصة ومحددة بالموضوع
      */
-    private function generateContextualFirstMessage(array $chatHistory, string $botName, string $gender): string
-    {
-        $apiKey = $_ENV['GEMINI_API_KEY'] ?? '';
-        if (empty($apiKey) || empty($chatHistory)) {
-            return '';
+private function generateContextualFirstMessage(array $chatHistory, string $botName, string $gender): string
+{
+    $apiKey = $_ENV['GEMINI_API_KEY'] ?? '';
+    if (empty($apiKey) || empty($chatHistory)) {
+        return '';
+    }
+
+    // NEW: قائمة الموديلات الحقيقية عشان Gemini ما يخترع اسم مش موجود
+    $availableModels = array_column($this->carModel->getAllModels(), 'model_name');
+    $modelsListText  = implode('، ', $availableModels);
+
+    $historyFormatted = '';
+    foreach ($chatHistory as $msg) {
+        $roleName = ($msg['role'] === 'user') ? 'العميل' : "أنتِ ({$botName})";
+        $text = $msg['text'] ?? ($msg['parts'][0]['text'] ?? '');
+        if (!empty($text)) {
+            $historyFormatted .= "- {$roleName}: {$text}\n";
         }
+    }
 
-        $historyFormatted = '';
-        foreach ($chatHistory as $msg) {
-            $roleName = ($msg['role'] === 'user') ? 'العميل' : "أنتِ ({$botName})";
-            $text = $msg['text'] ?? ($msg['parts'][0]['text'] ?? '');
-            if (!empty($text)) {
-                $historyFormatted .= "- {$roleName}: {$text}\n";
-            }
-        }
+    if (empty(trim($historyFormatted))) {
+        return '';
+    }
 
-        if (empty(trim($historyFormatted))) {
-            return '';
-        }
+    $genderText = ($gender === 'female') ? 'مؤنث (معِك، تفضلي، شفتِك)' : 'مذكر (معَك، تفضل، شفتَك)';
 
-        $genderText = ($gender === 'female') ? 'مؤنث (معِك، تفضلي، شفتِك)' : 'مذكر (معَك، تفضل، شفتَك)';
-
-        $systemInstruction = <<<PROMPT
+    $systemInstruction = <<<PROMPT
 أنتِ "{$botName}"، موظفة خدمة عملاء وكالة BYD في فلسطين (فرع رامَلله).
 تكلمي باللهجة الفلسطينية العامية البسيطة جداً.
 PROMPT;
 
-        $userPrompt = <<<PROMPT
+    $userPrompt = <<<PROMPT
 العميل كان عم يتواصل معك بالشات النصي وهسا تحول لمكالمة صوتية معك.
 إليك تاريخ المحادثة النصية السابقة معه:
 {$historyFormatted}
 
+قائمة الموديلات الحقيقية المتوفرة (المصدر الوحيد المعتمد لأي اسم موديل): {$modelsListText}
+
 المطلوب: توليد **جملة افتتاحية ترحيبية واحدة فقط لا غير** للمكالمة بصوت "{$botName}".
-الشروط الإلزامية:
-1. اذكر التحية واذكر اسمك ({$botName}) والترحيب بالعميل.
-2. استخدام صيغة المخاطبة المناسبة: {$genderText}.
-3. الإشارة المباشرة والملخصة جداً للسيارة أو الموضوع المحدد الذي كان يسأل عنه في الشات وعرض المساعدة فيها (مثال إذا كان يسأل عن ATTO 2: "سلام عليكم، معَك ميرا من بي واي دي. أهلاً بك، شفت إنك كنت عم تسأل بالشات عن الأتو تو، بتحب أحكيلك تفاصيل عن مواصفاتها؟").
-4. الجملة يجب أن تكون قصيرة وطبيعية للنطق، وممنوع استخدام التشكيل أو الإيموجي أو الرموز المعقدة.
-5. الإجابة يجب أن تكون النص الصريح النهائي لرسالة الترحيب الأولى دون أي مقدمات أو شروحات إضافية.
+
+قاعدة إلزامية وحاسمة: 
+- اذكري اسم سيارة محدد فقط إذا كان مذكوراً حرفياً بنص المحادثة السابقة وموجوداً بنفس الوقت بقائمة الموديلات الحقيقية أعلاه.
+- إذا ما كانت المحادثة السابقة تتضمن اسم موديل واضح ومطابق للقائمة، اكتفي بترحيب عام بدون ذكر أي اسم سيارة، مثال: "سلام عليكم، معَك {$botName} من بي واي دي. أهلاً بك مجدداً، شفت إنك كنت تتواصل معي بالشات، تفضل خلينا نكمل، كيف بقدر أساعدك؟"
+- ممنوع نهائياً اختراع أو تخمين اسم موديل غير موجود بالقائمة تحت أي ظرف.
+
+الشروط الأخرى:
+1. اذكري التحية واسمك ({$botName}) والترحيب بالعميل.
+2. صيغة المخاطبة: {$genderText}.
+3. الجملة قصيرة وطبيعية للنطق، بدون تشكيل أو إيموجي.
+4. النص الصريح النهائي فقط، بدون مقدمات.
 PROMPT;
+
+    // ... باقي الكود متل ما هو (curl call)
 
         $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={$apiKey}";
 
