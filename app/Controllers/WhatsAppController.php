@@ -14,9 +14,12 @@ use BYD\Services\GreenApiService;
  *
  * مكان هذا الملف: app/Controllers/WhatsAppController.php
  *
- * Change (DEBUG مؤقت): أسطر error_log إضافية بكل نقطة ممكن يتوقف فيها
- * التنفيذ مبكراً (idempotency، نوع ويبهوك متجاهل، رسالة مجموعة/فاضية،
- * نوع رسالة غير مدعوم) — عشان نحدد بالضبط وين التنفيذ عم يقف.
+ * FIX (متعدد الأدوات بنفس الرد): كان الكود يتعامل مع أول functionCall فقط
+ * لو Gemini رجع أكثر من طلب أداة بنفس الرد (مثلاً get_car_images +
+ * get_car_specifications بنفس الرسالة)، فباقي الطلبات كانت تضيع وبيصير
+ * mismatch بمحادثة Gemini، وبيرجع رد فاضي → "عذراً ما قدرت أجاوب".
+ * الحل: تجميع كل الـ functionCalls الموجودة بنفس الرد، تنفيذهم كلهم،
+ * وإرجاع functionResponse لكل واحد فيهم بنفس الدور.
  */
 final class WhatsAppController
 {
@@ -220,24 +223,24 @@ final class WhatsAppController
         error_log("[WhatsAppController] DEBUG sendMessage result=" . ($sendResult ? 'true' : 'FALSE'));
 
         // إرسال الصور (لو الأداة get_car_images رجعت صور) كملفات وسائط منفصلة
-if (!empty($latestImages['images'])) {
-    $projectRoot = dirname(__DIR__, 2);
-    $modelName   = $latestImages['model_name'] ?? '';
-    foreach (array_slice($latestImages['images'], 0, 5) as $img) {
-        $originalPath = $img['url'] ?? '';
-        $jpgUrlPath = (new \BYD\Services\ImageConverterService())->ensureJpgVersion($originalPath);
-        if ($jpgUrlPath === null) {
-            error_log("[WhatsAppController] Skipping image, conversion failed: {$originalPath}");
-            continue;
+        if (!empty($latestImages['images'])) {
+            $projectRoot = dirname(__DIR__, 2);
+            $modelName   = $latestImages['model_name'] ?? '';
+            foreach (array_slice($latestImages['images'], 0, 5) as $img) {
+                $originalPath = $img['url'] ?? '';
+                $jpgUrlPath = (new \BYD\Services\ImageConverterService())->ensureJpgVersion($originalPath);
+                if ($jpgUrlPath === null) {
+                    error_log("[WhatsAppController] Skipping image, conversion failed: {$originalPath}");
+                    continue;
+                }
+
+                $jpgAbsPath = $projectRoot . $jpgUrlPath;
+                $baseName   = pathinfo($img['file_name'] ?? 'car', PATHINFO_FILENAME);
+                $fileName   = $baseName . '.jpg';
+
+                $this->greenApi->sendFileByUpload($chatId, $jpgAbsPath, $fileName, $modelName);
+            }
         }
-
-        $jpgAbsPath = $projectRoot . $jpgUrlPath;
-        $baseName   = pathinfo($img['file_name'] ?? 'car', PATHINFO_FILENAME);
-        $fileName   = $baseName . '.jpg';
-
-        $this->greenApi->sendFileByUpload($chatId, $jpgAbsPath, $fileName, $modelName);
-    }
-}
 
         $this->jsonResponse(['status' => 'replied']);
     }
@@ -349,19 +352,31 @@ if (!empty($latestImages['images'])) {
             $response = $this->callGemini($url, $payload);
             $parts    = $response['candidates'][0]['content']['parts'] ?? [];
 
-            $functionCall     = null;
-            $thoughtSignature = null;
-            $textOut          = '';
+            // ─────────────────────────────────────────────────────────
+            // FIX: تجميع كل الـ functionCalls الموجودة بنفس الرد (مش أول
+            // وحدة بس). لو Gemini طلب أكثر من أداة بنفس الرسالة (مثلاً
+            // العميل قال "بدي صور السيارة وأبعادها")، لازم ننفذهم كلهم
+            // ونرجع functionResponse لكل واحد فيهم، وإلا بيصير mismatch
+            // بمحادثة Gemini وبيرجع رد فاضي بالدورة الجاية.
+            // ─────────────────────────────────────────────────────────
+            $functionCallParts = [];
+            $textOut            = '';
+
             foreach ($parts as $part) {
                 if (isset($part['functionCall'])) {
-                    $functionCall     = $part['functionCall'];
-                    $thoughtSignature = $part['thoughtSignature'] ?? null;
+                    // Gemini 3 بيطلب thoughtSignature إلزامياً بكل functionCall —
+                    // لو مش راجعة (بيصير أحياناً بـ flash-lite)، نحط placeholder
+                    // ثابت بدل ما نتركها فاضية، لأنه غيابها بيسبب 400 INVALID_ARGUMENT.
+                    if (!isset($part['thoughtSignature'])) {
+                        $part['thoughtSignature'] = 'context_engine_is_ok_to_proceed_without_signature';
+                    }
+                    $functionCallParts[] = $part;
                 } elseif (isset($part['text'])) {
                     $textOut .= $part['text'];
                 }
             }
 
-            if ($functionCall === null) {
+            if (empty($functionCallParts)) {
                 $textOut = trim($textOut);
                 if ($textOut === '') {
                     $finishReason = $response['candidates'][0]['finishReason'] ?? 'unknown';
@@ -370,36 +385,30 @@ if (!empty($latestImages['images'])) {
                 return $textOut !== '' ? $textOut : 'عذراً، ما قدرت أجاوب هلق. جرب تسأل بطريقة تانية.';
             }
 
-            $fnName = $functionCall['name'] ?? '';
-            $fnArgs = $functionCall['args'] ?? [];
+            // رد الموديل الكامل بكل الـ functionCalls يلي طلبها بنفس الدور،
+            // كتلة parts واحدة (مش عدة أدوار model منفصلة).
+            $contents[] = ['role' => 'model', 'parts' => $functionCallParts];
 
-            $result = $this->tools->executeTool($fnName, $fnArgs, $sessionId, $context);
+            // ننفذ كل أداة بالترتيب، ونبني functionResponse مطابق لكل واحدة
+            $functionResponseParts = [];
+            foreach ($functionCallParts as $fcPart) {
+                $fc     = $fcPart['functionCall'];
+                $fnName = $fc['name'] ?? '';
+                $fnArgs = $fc['args'] ?? [];
 
-            $argsForReplay = $functionCall['args'] ?? [];
-            if (empty($argsForReplay)) {
-                $argsForReplay = new \stdClass();
-            }
+                $result = $this->tools->executeTool($fnName, $fnArgs, $sessionId, $context);
 
-           $modelPart = [
-    'functionCall' => [
-        'name' => $fnName,
-        'args' => $argsForReplay,
-    ],
-    // Gemini 3 بيطلب thoughtSignature إلزامياً بكل functionCall — لو الموديل
-    // ما رجعهاش (بيصير أحياناً بـ flash-lite)، بنحط placeholder ثابت بدل
-    // ما نتركها فاضية، لأنه غيابها بيسبب 400 INVALID_ARGUMENT.
-    'thoughtSignature' => $thoughtSignature ?? 'context_engine_is_ok_to_proceed_without_signature',
-];
-
-            $contents[] = ['role' => 'model', 'parts' => [$modelPart]];
-            $contents[] = [
-                'role'  => 'function',
-                'parts' => [[
+                $functionResponseParts[] = [
                     'functionResponse' => [
                         'name'     => $fnName,
                         'response' => $result,
                     ],
-                ]],
+                ];
+            }
+
+            $contents[] = [
+                'role'  => 'function',
+                'parts' => $functionResponseParts,
             ];
         }
 

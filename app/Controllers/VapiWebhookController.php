@@ -771,11 +771,7 @@ private function saveCustomerFeedback(array $params, string $callId, array &$con
     $db = \BYD\Models\Database::getInstance();
     $db->execute(
         'INSERT INTO call_feedback (call_id, customer_id, feedback_text, sentiment_score, sentiment_summary)
-         VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-             feedback_text     = VALUES(feedback_text),
-             sentiment_score   = VALUES(sentiment_score),
-             sentiment_summary = VALUES(sentiment_summary)',
+         VALUES (?, ?, ?, ?, ?)',
         [$callId, $customerId, $feedbackText, $score, $summary]
     );
 
@@ -809,7 +805,16 @@ private function checkAppointmentAvailability(array $params): array
 
     $hours   = $this->appointmentModel->getWorkingHours();
     $today   = date('Y-m-d');
+    $nowTime = date('H:i');
     $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($date === $today && $time !== '' && $time <= $nowTime) {
+        return [
+            'success'    => false,
+            'error'      => 'TIME_PASSED',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
 
     if ($date < $today || $date > $maxDate) {
         return [
@@ -889,7 +894,16 @@ private function bookAppointment(array $params, string $callId, array &$context)
 
     $hours   = $this->appointmentModel->getWorkingHours();
     $today   = date('Y-m-d');
+    $nowTime = date('H:i');
     $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($date === $today && $time <= $nowTime) {
+        return [
+            'success'    => false,
+            'error'      => 'TIME_PASSED',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
 
     if ($date < $today || $date > $maxDate || !AppointmentModel::isWorkingDay($date)) {
         return [
@@ -1299,6 +1313,7 @@ private function buildSystemPrompt(string $callId, string $gender = 'male'): str
         // معلومات المواعيد الديناميكية (دوام الفرع + مدى الحجز المسموح) لبرومبت حجز المواعيد
         $apptHours   = $this->appointmentModel->getWorkingHours();
         $todayDate   = date('Y-m-d');
+        $currentTime = date('H:i');
         $maxBookDate = date('Y-m-d', strtotime($todayDate . " +{$apptHours['days_ahead']} days"));
         $arabicDays  = [
             'Sunday' => 'الأحد', 'Monday' => 'الاثنين', 'Tuesday' => 'الثلاثاء',
@@ -2207,7 +2222,8 @@ note_text: نص الملاحظة بس، ممنوع تحطي الاسم أو ال
 مساعدة العميل يحجز موعد لزيارة الفرع، فقط إذا طلب هيك صراحة (متل: "بدي أحجز موعد" / "بدي أجي عندكم" / "امتى بقدر أجي" / "بدي أشوف السيارة عالطبيعة").
 
 ### معلومات ثابتة لازم تعتمديها بالحجز (ما تخترعي غيرها)
-- تاريخ اليوم: {$todayDate} ({$todayDayNameAr}).
+- تاريخ ووقت الآن بالضبط: {$todayDate} الساعة {$currentTime} ({$todayDayNameAr}).
+- إذا طلب العميل موعد لنفس تاريخ اليوم بوقت ساوى أو سبق الوقت الحالي المذكور فوق، اعتبريه غير متاح تلقائياً بغض النظر عن رد الأداة، ولا تعرضيه عالعميل أبداً — اطلبي وقت تاني بعد الوقت الحالي أو اقترحي اليوم التالي.
 - دوام الفرع يومياً من الساعة {$apptHours['start']} لـ {$apptHours['end']}، من السبت للخميس. يوم الجمعة الفرع مسكر ما في حجز فيه.
 - كل موعد مدته نص ساعة.
 - أقصى مدى للحجز قدام هو تاريخ {$maxBookDate} (يعني بحدود {$apptHours['days_ahead']} يوم من اليوم) — ممنوع تقبلي حجز بعد هاد التاريخ.
@@ -3027,6 +3043,7 @@ PROMPT;
         // معلومات المواعيد الديناميكية (دوام الفرع + مدى الحجز المسموح) لبرومبت حجز المواعيد
         $apptHours   = $this->appointmentModel->getWorkingHours();
         $todayDate   = date('Y-m-d');
+        $currentTime = date('H:i');
         $maxBookDate = date('Y-m-d', strtotime($todayDate . " +{$apptHours['days_ahead']} days"));
         $arabicDays  = [
             'Sunday' => 'الأحد', 'Monday' => 'الاثنين', 'Tuesday' => 'الثلاثاء',
@@ -3100,7 +3117,8 @@ PROMPT;
 مساعدة العميل يحجز موعد لزيارة الفرع، فقط إذا طلب هيك صراحة (متل: "بدي أحجز موعد" / "بدي أجي عندكم" / "امتى بقدر أجي" / "بدي أشوف السيارة عالطبيعة").
 
 ### معلومات ثابتة لازم تعتمديها بالحجز (ما تخترعي غيرها)
-- تاريخ اليوم: {$todayDate} ({$todayDayNameAr}).
+- تاريخ ووقت الآن بالضبط: {$todayDate} الساعة {$currentTime} ({$todayDayNameAr}).
+- إذا طلب العميل موعد لنفس تاريخ اليوم بوقت ساوى أو سبق الوقت الحالي المذكور فوق، اعتبريه غير متاح تلقائياً بغض النظر عن رد الأداة، ولا تعرضيه عالعميل أبداً — اطلبي وقت تاني بعد الوقت الحالي أو اقترحي اليوم التالي.
 - دوام الفرع يومياً من الساعة {$apptHours['start']} لـ {$apptHours['end']}، من السبت للخميس. يوم الجمعة الفرع مسكر.
 - كل موعد مدته نص ساعة.
 - أقصى مدى للحجز قدام هو تاريخ {$maxBookDate} (بحدود {$apptHours['days_ahead']} يوم من اليوم) — ممنوع تقبلي حجز بعد هاد التاريخ.
