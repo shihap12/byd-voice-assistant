@@ -6,18 +6,28 @@ namespace BYD\Controllers;
 
 use BYD\Models\RedisClient;
 use BYD\Models\CarModel;
+use BYD\Models\AppointmentModel;
 use BYD\Security\Security;
 
 
 final class VapiWebhookController
 {
-    private RedisClient $redis;
-    private CarModel    $carModel;
+    private RedisClient     $redis;
+    private CarModel        $carModel;
+    private AppointmentModel $appointmentModel;
+
+    /**
+     * القناة اللي بتستخدم الأدوات هلق (voice / chat / whatsapp).
+     * الافتراضي "voice" (Vapi). ChatController وWhatsAppController
+     * بيغيروها بعد إنشاء الكائن عشان نعرف نميّز مصدر الموعد بجدول appointments.
+     */
+    public string $channel = 'voice';
 
     public function __construct()
     {
-        $this->redis    = RedisClient::getInstance();
-        $this->carModel = new CarModel();
+        $this->redis            = RedisClient::getInstance();
+        $this->carModel         = new CarModel();
+        $this->appointmentModel = new AppointmentModel();
     }
 
     public function handle(): void
@@ -570,6 +580,8 @@ PROMPT;
             'recommend_car'          => $this->recommendCar($arguments, $callId, $context),
             'save_customer_note'     => $this->validateAndSaveCustomerNote($arguments, $callId, $context),
             'save_customer_feedback' => $this->saveCustomerFeedback($arguments, $callId, $context),
+            'check_appointment_availability' => $this->checkAppointmentAvailability($arguments),
+            'book_appointment'               => $this->bookAppointment($arguments, $callId, $context),
             default                  => ['error' => "دالة غير معروفة: {$functionName}"],
         };
     }
@@ -772,6 +784,163 @@ private function saveCustomerFeedback(array $params, string $callId, array &$con
     error_log("[VapiWebhook] [save_customer_feedback] callId={$callId}, score={$score}");
 
     return ['status' => 'saved', 'message' => 'شكراً إلك على رأيك'];
+}
+
+/**
+ * check_appointment_availability
+ *
+ * يتحقق إن كان تاريخ/وقت معين متاح للحجز. لو مش متاح (مشغول، خارج الدوام،
+ * يوم جمعة، أو بره نطاق الأيام المسموحة)، بترجع أقرب موعد بديل متاح
+ * عبر AppointmentModel::findNearestAvailableSlot().
+ *
+ * ما بتحجز أي إشي — فقط فحص + اقتراح. الحجز الفعلي بيصير عبر bookAppointment().
+ */
+private function checkAppointmentAvailability(array $params): array
+{
+    $date = trim((string) ($params['preferred_date'] ?? ''));
+    $time = trim((string) ($params['preferred_time'] ?? ''));
+
+    if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        return ['success' => false, 'error' => 'INVALID_DATE'];
+    }
+    if ($time !== '' && !preg_match('/^\d{2}:\d{2}$/', $time)) {
+        return ['success' => false, 'error' => 'INVALID_TIME'];
+    }
+
+    $hours   = $this->appointmentModel->getWorkingHours();
+    $today   = date('Y-m-d');
+    $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($date < $today || $date > $maxDate) {
+        return [
+            'success'       => false,
+            'error'         => 'OUT_OF_RANGE',
+            'earliest_date' => $today,
+            'latest_date'   => $maxDate,
+        ];
+    }
+
+    if (!AppointmentModel::isWorkingDay($date)) {
+        return [
+            'success'    => false,
+            'error'      => 'CLOSED_DAY',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time !== '' ? $time : null),
+        ];
+    }
+
+    if ($time !== '') {
+        if ($time < $hours['start'] || $time >= $hours['end']) {
+            return [
+                'success'       => false,
+                'error'         => 'OUTSIDE_WORKING_HOURS',
+                'working_hours' => $hours,
+                'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+            ];
+        }
+
+        if ($this->appointmentModel->isSlotFree($date, $time, $hours['slot_minutes'])) {
+            return ['success' => true, 'available' => true, 'date' => $date, 'time' => $time];
+        }
+
+        return [
+            'success'    => true,
+            'available'  => false,
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    // ما انذكر وقت محدد — رجعي أقرب سلوت فاضي بنفس اليوم أو اللي بعده
+    return [
+        'success'    => true,
+        'available'  => false,
+        'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date),
+    ];
+}
+
+/**
+ * book_appointment
+ *
+ * الحجز الفعلي، بعد ما العميل وافق على تاريخ ووقت محددين (سواء طلبه
+ * الأصلي أو البديل المقترح من check_appointment_availability).
+ * بتعيد فحص التوفر لحظة الحجز (منعاً لتعارض لو صار حجز تاني بنفس الفترة
+ * بين الفحص والتأكيد)، وبتتحقق من الاسم ورقم الجوال بنفس منطق الملاحظات.
+ */
+private function bookAppointment(array $params, string $callId, array &$context): array
+{
+    $rawName  = trim((string) ($params['customer_name'] ?? ''));
+    $rawPhone = trim((string) ($params['phone_number'] ?? ''));
+    $date     = trim((string) ($params['appointment_date'] ?? ''));
+    $time     = trim((string) ($params['appointment_time'] ?? ''));
+
+    if (!$this->isValidCustomerName($rawName)) {
+        error_log("[VapiWebhook] [book_appointment] callId={$callId}, INVALID_NAME raw='{$rawName}'");
+        return ['success' => false, 'error' => 'INVALID_NAME'];
+    }
+
+    $normalizedPhone = $this->normalizePhone($rawPhone);
+    if ($normalizedPhone === null) {
+        error_log("[VapiWebhook] [book_appointment] callId={$callId}, INVALID_PHONE raw='{$rawPhone}'");
+        return ['success' => false, 'error' => 'INVALID_PHONE'];
+    }
+
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || !preg_match('/^\d{2}:\d{2}$/', $time)) {
+        return ['success' => false, 'error' => 'INVALID_DATETIME'];
+    }
+
+    $hours   = $this->appointmentModel->getWorkingHours();
+    $today   = date('Y-m-d');
+    $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($date < $today || $date > $maxDate || !AppointmentModel::isWorkingDay($date)) {
+        return [
+            'success'    => false,
+            'error'      => 'INVALID_DAY',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot(max($date, $today), $time),
+        ];
+    }
+
+    if ($time < $hours['start'] || $time >= $hours['end']) {
+        return [
+            'success'    => false,
+            'error'      => 'OUTSIDE_WORKING_HOURS',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    // فحص أخير لحظة الحجز — منعاً لتعارض لحظي بين الفحص والتأكيد
+    if (!$this->appointmentModel->isSlotFree($date, $time, $hours['slot_minutes'])) {
+        return [
+            'success'    => false,
+            'error'      => 'SLOT_TAKEN',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    $cleanName = preg_replace('/\s+/u', ' ', $rawName);
+
+    $id = $this->appointmentModel->create([
+        'customer_name'    => $cleanName,
+        'phone_number'     => $normalizedPhone,
+        'appointment_date' => $date,
+        'appointment_time' => $time,
+        'duration_minutes' => $hours['slot_minutes'],
+        'source'           => $this->channel,
+        'session_id'       => $callId,
+    ]);
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:appointments');
+
+    error_log("[VapiWebhook] [book_appointment] callId={$callId}, id={$id}, date={$date}, time={$time}, channel={$this->channel}");
+
+    return [
+        'success'     => true,
+        'status'      => 'booked',
+        'appointment' => [
+            'id'   => $id,
+            'date' => $date,
+            'time' => $time,
+        ],
+    ];
 }
 
 
@@ -1126,6 +1295,16 @@ private function buildSystemPrompt(string $callId, string $gender = 'male'): str
         // جلب اسم البوت الديناميكي
         $settings = AdminController::loadSettings($this->redis);
         $botName = $settings['bot_name'] ?? 'ميرا';
+
+        // معلومات المواعيد الديناميكية (دوام الفرع + مدى الحجز المسموح) لبرومبت حجز المواعيد
+        $apptHours   = $this->appointmentModel->getWorkingHours();
+        $todayDate   = date('Y-m-d');
+        $maxBookDate = date('Y-m-d', strtotime($todayDate . " +{$apptHours['days_ahead']} days"));
+        $arabicDays  = [
+            'Sunday' => 'الأحد', 'Monday' => 'الاثنين', 'Tuesday' => 'الثلاثاء',
+            'Wednesday' => 'الأربعاء', 'Thursday' => 'الخميس', 'Friday' => 'الجمعة', 'Saturday' => 'السبت',
+        ];
+        $todayDayNameAr = $arabicDays[date('l', strtotime($todayDate))] ?? '';
 
         $historyText = '';
         $context = $this->redis->getContext($callId); // callId is the sessionId
@@ -2022,6 +2201,31 @@ note_text: نص الملاحظة بس، ممنوع تحطي الاسم أو ال
 
 إذا العميل سبق أعطى رأيه من تلقاء نفسه أثناء المكالمة، استخدمي save_customer_feedback مباشرة وما تعيدي سؤاله بنهاية المكالمة.
 
+## 6.7 حجز المواعيد
+
+### الهدف
+مساعدة العميل يحجز موعد لزيارة الفرع، فقط إذا طلب هيك صراحة (متل: "بدي أحجز موعد" / "بدي أجي عندكم" / "امتى بقدر أجي" / "بدي أشوف السيارة عالطبيعة").
+
+### معلومات ثابتة لازم تعتمديها بالحجز (ما تخترعي غيرها)
+- تاريخ اليوم: {$todayDate} ({$todayDayNameAr}).
+- دوام الفرع يومياً من الساعة {$apptHours['start']} لـ {$apptHours['end']}، من السبت للخميس. يوم الجمعة الفرع مسكر ما في حجز فيه.
+- كل موعد مدته نص ساعة.
+- أقصى مدى للحجز قدام هو تاريخ {$maxBookDate} (يعني بحدود {$apptHours['days_ahead']} يوم من اليوم) — ممنوع تقبلي حجز بعد هاد التاريخ.
+
+### خطوات الحجز (إلزامي بنفس الترتيب)
+1. اسألي العميل عن اليوم والوقت اللي بناسبه. حوّلي أي تاريخ نسبي (بكرة، بعد بكرة، يوم الحد الجاي...) لتاريخ فعلي بصيغة YYYY-MM-DD بالاعتماد حصراً على تاريخ اليوم المذكور فوق — ما تحسبي من عندك.
+2. استخدمي check_appointment_availability بالتاريخ (والوقت لو انذكر) قبل أي تأكيد أو وعد للعميل.
+3. إذا رجعت available: true → أكدي مع العميل التاريخ والوقت بجملة وحدة واضحة، وبعد موافقته الصريحة استخدمي book_appointment بنفس القيم بالضبط.
+4. إذا رجعت available: false مع suggestion → اقترحي على العميل الموعد البديل بأسلوب طبيعي، متل: "هاد الوقت مش متاح، بس أقرب موعد فاضي إلي هو يوم [التاريخ] الساعة [الوقت]، بيناسبك؟". ممنوع تحجزي إلا بعد موافقته الصريحة على الموعد البديل بالذات.
+5. إذا رفض العميل الموعد البديل، اسأليه عن يوم أو وقت تاني وكرري من الخطوة 2.
+6. بعد ما ياخد العميل قرار نهائي بيوم ووقت محددين، خدي منه اسمه الثلاثي ورقم جواله (إلا إذا كانوا موجودين مسبقاً بنفس المكالمة من ملاحظة أو حجز سابق)، وبعدين استخدمي book_appointment.
+7. إذا رجعت book_appointment بـ success:true → أكدي للعميل الموعد بجملة طبيعية ("تمام، حجزتلك موعد يوم [كذا] الساعة [كذا]، منستناك بالفرع.") بدون عبارات آلية زي "تم تأكيد الحجز" أو "تم إدخال البيانات".
+8. إذا رجعت INVALID_NAME أو INVALID_PHONE → اطلبي المعلومة الناقصة بنفس أسلوب قسم تسجيل الملاحظات فوق، وأعيدي محاولة الحجز.
+9. إذا رجعت SLOT_TAKEN أو أي خطأ توفر تاني → اعرضي البديل الجديد من suggestion واطلبي موافقة العميل من جديد، ما تفترضيش إنه موافق.
+10. ممنوع نهائياً تحجزي أي موعد بيوم جمعة، أو بره الدوام، أو بعد تاريخ {$maxBookDate} — إذا صار هيك، اعتمدي على suggestion من الأداة.
+11. ممنوع تخترعي تاريخ أو وقت أو تقولي "تم الحجز" من عندك بدون ما تستخدمي book_appointment فعلياً وترجع success:true.
+12. ما تذكريش للعميل اسم أي أداة أو إنك "بتفحصي التوفر" — تصرفي بطبيعية زي موظفة بتشيك بالجدول.
+
 
 ## 7. آلية التنفيذ
 
@@ -2820,6 +3024,16 @@ PROMPT;
         $settings = AdminController::loadSettings($this->redis);
         $botName = $settings['bot_name'] ?? 'ميرا';
 
+        // معلومات المواعيد الديناميكية (دوام الفرع + مدى الحجز المسموح) لبرومبت حجز المواعيد
+        $apptHours   = $this->appointmentModel->getWorkingHours();
+        $todayDate   = date('Y-m-d');
+        $maxBookDate = date('Y-m-d', strtotime($todayDate . " +{$apptHours['days_ahead']} days"));
+        $arabicDays  = [
+            'Sunday' => 'الأحد', 'Monday' => 'الاثنين', 'Tuesday' => 'الثلاثاء',
+            'Wednesday' => 'الأربعاء', 'Thursday' => 'الخميس', 'Friday' => 'الجمعة', 'Saturday' => 'السبت',
+        ];
+        $todayDayNameAr = $arabicDays[date('l', strtotime($todayDate))] ?? '';
+
         return <<<PROMPT
 أنتِ "{$botName}"، مساعدة BYD الذكية على شات الموقع الرسمي لشركة BYD بفلسطين (فرع رامَلله).
 هاد شات نصي مش مكالمة صوتية، فجاوبي بنص عادي وبدون أي رموز أو حركات تشكيل خاصة بالنطق.
@@ -2856,6 +3070,7 @@ PROMPT;
 - العميل محتار أو طلب مساعدة بالاختيار → - اسأليه سؤال واحد فقط في كل رسالة. (الاستخدام، عدد الركاب، الأولوية) ثم استخدمي recommend_car
 - ملاحظة/شكوى/طلب متابعة واضح مع اسم ورقم جوال → save_customer_note (شوفي قسم 5)
 - رأي عن التجربة (نادراً بالشات، بس إذا صار) → save_customer_feedback
+- بدو يحجز موعد لزيارة الفرع أو يسأل "امتى بقدر أجي" → check_appointment_availability ثم book_appointment (شوفي قسم 5.5)
 
 كل سؤال يحتاج بيانات فعلية (مواصفات، أسعار، ألوان، ضمان، مقارنة) لازم يمر عبر الأداة المناسبة أولاً — ممنوع تجاوبي من عندك أو تخمّني رقم.
 
@@ -2878,6 +3093,31 @@ PROMPT;
 - إذا كان رأياً إيجابياً أو سلبياً فقط استخدمي save_customer_feedback.
 - إذا ذكر مشكلة تحتاج متابعة استخدمي save_customer_note.
 - إذا جمع رأياً + مشكلة استخدمي الأداتين.
+
+## 5.5 حجز المواعيد
+
+### الهدف
+مساعدة العميل يحجز موعد لزيارة الفرع، فقط إذا طلب هيك صراحة (متل: "بدي أحجز موعد" / "بدي أجي عندكم" / "امتى بقدر أجي" / "بدي أشوف السيارة عالطبيعة").
+
+### معلومات ثابتة لازم تعتمديها بالحجز (ما تخترعي غيرها)
+- تاريخ اليوم: {$todayDate} ({$todayDayNameAr}).
+- دوام الفرع يومياً من الساعة {$apptHours['start']} لـ {$apptHours['end']}، من السبت للخميس. يوم الجمعة الفرع مسكر.
+- كل موعد مدته نص ساعة.
+- أقصى مدى للحجز قدام هو تاريخ {$maxBookDate} (بحدود {$apptHours['days_ahead']} يوم من اليوم) — ممنوع تقبلي حجز بعد هاد التاريخ.
+
+### خطوات الحجز (إلزامي بنفس الترتيب)
+1. اسألي العميل عن اليوم والوقت اللي بناسبه. حوّلي أي تاريخ نسبي (بكرة، بعد بكرة، الأحد الجاي...) لتاريخ فعلي بصيغة YYYY-MM-DD بالاعتماد حصراً على تاريخ اليوم فوق.
+2. استخدمي check_appointment_availability بالتاريخ (والوقت لو انذكر) قبل أي تأكيد أو وعد للعميل.
+3. إذا رجعت available: true → أكدي مع العميل التاريخ والوقت، وبعد موافقته الصريحة استخدمي book_appointment بنفس القيم بالضبط.
+4. إذا رجعت available: false مع suggestion → اقترحي البديل بأسلوب طبيعي ("هاد الوقت مش متاح، بس أقرب موعد فاضي إلي هو يوم [التاريخ] الساعة [الوقت]، بيناسبك؟"). ممنوع تحجزي إلا بعد موافقته الصريحة على البديل بالذات.
+5. إذا رفض العميل البديل، اسأليه عن يوم أو وقت تاني وكرري من الخطوة 2.
+6. بعد ما ياخد قرار نهائي بيوم ووقت محددين، خدي منه اسمه الثلاثي ورقم جواله (إلا إذا كانوا موجودين مسبقاً بنفس الجلسة)، وبعدين استخدمي book_appointment.
+7. إذا رجعت success:true → أكدي الموعد بجملة طبيعية بدون عبارات آلية.
+8. إذا رجعت INVALID_NAME أو INVALID_PHONE → اطلبي المعلومة الناقصة وأعيدي المحاولة.
+9. إذا رجعت SLOT_TAKEN أو أي خطأ توفر تاني → اعرضي البديل الجديد واطلبي موافقة العميل من جديد.
+10. ممنوع نهائياً تحجزي موعد بيوم جمعة، أو بره الدوام، أو بعد تاريخ {$maxBookDate}.
+11. ممنوع تخترعي تاريخ أو وقت أو تقولي "تم الحجز" بدون ما تستدعي book_appointment فعلياً وترجع success:true.
+
 ## 6. سياق المحادثة
 
 - تذكري كل اللي ذكرتيه بنفس الجلسة، ولا تكرري نفس المعلومة أو نفس السؤال مرتين.
@@ -3312,6 +3552,62 @@ PROMPT;
                 ],
             ],
             'required' => ['feedback_text'],
+        ],
+    ],
+    'messages' => [
+        ['type' => 'request-start', 'content' => ''],
+    ],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'check_appointment_availability',
+        'description' => 'التحقق إذا كان تاريخ ووقت معين متاح لحجز موعد زيارة الفرع، قبل تأكيد الحجز الفعلي. إذا كان الوقت مشغول أو خارج دوام الفرع أو يوم إغلاق (الجمعة) أو بره المدى المسموح، بترجع أقرب موعد بديل متاح. استخدميها دايماً قبل book_appointment.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'preferred_date' => [
+                    'type'        => 'string',
+                    'description' => 'التاريخ المطلوب بصيغة YYYY-MM-DD (حوّلي أي تاريخ نسبي زي "بكرة" أو "الأحد الجاي" لتاريخ فعلي بالاعتماد على تاريخ اليوم المذكور بالبرومبت)',
+                ],
+                'preferred_time' => [
+                    'type'        => 'string',
+                    'description' => 'الوقت المطلوب بصيغة HH:MM (اختياري — لو ما انذكر، بترجع أقرب موعد متاح باليوم المطلوب أو بعده)',
+                ],
+            ],
+            'required' => ['preferred_date'],
+        ],
+    ],
+    'messages' => [
+        ['type' => 'request-start', 'content' => ''],
+    ],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'book_appointment',
+        'description' => 'تأكيد وحجز موعد فعلي لزيارة الفرع، فقط بعد التحقق من التوفر عبر check_appointment_availability وموافقة العميل الصريحة على التاريخ والوقت النهائيين. لازم اسم العميل الثلاثي ورقم جواله.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'customer_name' => [
+                    'type'        => 'string',
+                    'description' => 'اسم العميل الثلاثي كما قاله بالضبط، بدون أي تعديل أو تصحيح منك',
+                ],
+                'phone_number' => [
+                    'type'        => 'string',
+                    'description' => 'رقم جوال العميل كما قاله بالضبط، بدون أي تعديل من طرفك',
+                ],
+                'appointment_date' => [
+                    'type'        => 'string',
+                    'description' => 'تاريخ الموعد النهائي المتفق عليه مع العميل بصيغة YYYY-MM-DD',
+                ],
+                'appointment_time' => [
+                    'type'        => 'string',
+                    'description' => 'وقت الموعد النهائي المتفق عليه مع العميل بصيغة HH:MM',
+                ],
+            ],
+            'required' => ['customer_name', 'phone_number', 'appointment_date', 'appointment_time'],
         ],
     ],
     'messages' => [

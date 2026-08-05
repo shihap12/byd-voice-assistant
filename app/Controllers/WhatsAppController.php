@@ -35,6 +35,7 @@ final class WhatsAppController
     {
         $this->redis    = RedisClient::getInstance();
         $this->tools    = new VapiWebhookController();
+        $this->tools->channel = 'whatsapp';
         $this->greenApi = new GreenApiService();
     }
 

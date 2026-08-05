@@ -158,6 +158,14 @@ $router->add('GET', '/api/admin/feedback', function (): void {
     (new AdminController())->apiGetFeedback();
 });
 
+$router->add('GET', '/admin/api/appointments', function (): void {
+    (new AdminController())->apiGetAppointments();
+});
+
+$router->add('POST', '/admin/api/appointments/{id}', function (string $id): void {
+    (new AdminController())->apiUpdateAppointmentStatus($id);
+});
+
 $router->add('GET', '/admin/me', function (): void {
     (new AdminController())->apiMe();
 });

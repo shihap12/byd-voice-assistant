@@ -42,6 +42,7 @@ final class ChatController
     {
         $this->redis = RedisClient::getInstance();
         $this->tools = new VapiWebhookController();
+        $this->tools->channel = 'chat';
     }
 
     public function handle(): void

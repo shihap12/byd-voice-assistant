@@ -175,6 +175,106 @@ final class AdminController
         echo json_encode($result, JSON_UNESCAPED_UNICODE);
     }
 
+    // ─────────────────────────────────────────────────────────
+    // Appointments (تبويب المواعيد)
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * قائمة كل المواعيد مع فلاتر اختيارية عبر query string:
+     * ?status=scheduled|cancelled|completed  &from=YYYY-MM-DD  &to=YYYY-MM-DD
+     */
+    public function apiGetAppointments(): void
+    {
+        $this->startSession();
+        if ($this->getAuthenticatedAdmin() === null) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            return;
+        }
+
+        header('Content-Type: application/json');
+
+        $status = trim((string) ($_GET['status'] ?? ''));
+        $from   = trim((string) ($_GET['from'] ?? ''));
+        $to     = trim((string) ($_GET['to'] ?? ''));
+
+        $filters = [];
+        if ($status !== '' && in_array($status, ['scheduled', 'cancelled', 'completed'], true)) {
+            $filters['status'] = $status;
+        }
+        if ($from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
+            $filters['from'] = $from;
+        }
+        if ($to !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+            $filters['to'] = $to;
+        }
+
+        // الكاش فقط للاستعلام الافتراضي (بدون فلاتر) — نفس نمط باقي تبويبات الأدمن
+        $cacheKey = 'cache:admin:appointments';
+        if (empty($filters)) {
+            $cached = $this->redis->get($cacheKey);
+            if ($cached !== null) {
+                echo json_encode(['success' => true, 'appointments' => $cached], JSON_UNESCAPED_UNICODE);
+                return;
+            }
+        }
+
+        $appointmentModel = new \BYD\Models\AppointmentModel();
+        $appointments = $appointmentModel->getAll($filters);
+
+        if (empty($filters)) {
+            $this->redis->set($cacheKey, $appointments, 31536000);
+        }
+
+        echo json_encode(['success' => true, 'appointments' => $appointments], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * تعديل حالة موعد (تأكيد/إلغاء/إتمام) من صفحة الأدمن.
+     * POST محمي بـ CSRF token (نفس آلية جلسة الأدمن — session_id).
+     */
+    public function apiUpdateAppointmentStatus(string $id): void
+    {
+        $this->startSession();
+        if ($this->getAuthenticatedAdmin() === null) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            return;
+        }
+
+        header('Content-Type: application/json');
+
+        $raw  = file_get_contents('php://input');
+        $body = json_decode($raw, true) ?? [];
+
+        $csrfToken = (string) ($body['csrf_token'] ?? '');
+        if (!Security::validateCsrfToken(session_id(), $csrfToken)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'رمز الحماية غير صالح أو منتهي، حاول مرة أخرى.']);
+            return;
+        }
+
+        $status = trim((string) ($body['status'] ?? ''));
+        if (!in_array($status, ['scheduled', 'cancelled', 'completed'], true)) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'message' => 'حالة غير صالحة.']);
+            return;
+        }
+
+        $appointmentModel = new \BYD\Models\AppointmentModel();
+        $updated = $appointmentModel->updateStatus((int) $id, $status);
+
+        if (!$updated) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'الموعد غير موجود.']);
+            return;
+        }
+
+        $this->redis->delete('cache:admin:appointments');
+
+        echo json_encode(['success' => true]);
+    }
+
     public function dashboard(): void
     {
         $this->startSession();
@@ -877,7 +977,12 @@ final class AdminController
         }
 
         $db = \BYD\Models\Database::getInstance();
-        $allowedKeys = ['bot_name', 'bot_name_en'];
+        $allowedKeys = [
+            'bot_name', 'bot_name_en',
+            // دوام الفرع ومدى الحجز المسموح لنظام المواعيد — قابلة للتحكم من هون
+            'appointment_start_time', 'appointment_end_time',
+            'appointment_slot_minutes', 'appointment_booking_days_ahead',
+        ];
 
         foreach ($settings as $key => $value) {
             if (!in_array($key, $allowedKeys, true)) {
@@ -887,6 +992,17 @@ final class AdminController
             if ($value === '') {
                 continue;
             }
+
+            // تحقق بسيط من صيغة القيم الخاصة بدوام المواعيد قبل الحفظ
+            if (in_array($key, ['appointment_start_time', 'appointment_end_time'], true)
+                && !preg_match('/^\d{2}:\d{2}$/', $value)) {
+                continue;
+            }
+            if (in_array($key, ['appointment_slot_minutes', 'appointment_booking_days_ahead'], true)
+                && (!ctype_digit($value) || (int) $value <= 0)) {
+                continue;
+            }
+
             $db->execute(
                 'INSERT INTO admin_settings (setting_key, setting_value) VALUES (?, ?)
                  ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
@@ -894,7 +1010,7 @@ final class AdminController
             );
         }
 
-        // Clear settings cache
+        // Clear settings cache (بيأثر كمان على AppointmentModel::getWorkingHours لأنها بتقرا من نفس الكاش)
         $this->redis->delete('cache:settings');
 
         echo json_encode(['success' => true]);
