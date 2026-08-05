@@ -122,7 +122,8 @@ final class ChatController
         foreach ($history as $h) {
             $contents[] = ['role' => $h['role'], 'parts' => [['text' => $h['text']]]];
         }
-        $contents[] = ['role' => 'user', 'parts' => [['text' => $message]]];
+        $userParts = [['text' => $message]];
+        $contents[] = ['role' => 'user', 'parts' => $userParts];
 
         $apiKey = $_ENV['GEMINI_API_KEY'] ?? '';
         $url    = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={$apiKey}";
@@ -143,19 +144,40 @@ final class ChatController
 
             $parts = $response['candidates'][0]['content']['parts'] ?? [];
 
-            $functionCall     = null;
-            $thoughtSignature = null;
-            $textOut          = '';
+            // ─────────────────────────────────────────────────────────
+            // FALLBACK: لو Gemini رجع 400 بأول hop (مع التاريخ)،
+            // غالباً السبب تاريخ محادثة فاسد بـ Redis.
+            // نمسح التاريخ ونعيد المحاولة بالرسالة الحالية فقط.
+            // ─────────────────────────────────────────────────────────
+            if (empty($parts) && $hop === 0 && !empty($history)) {
+                error_log("[ChatController] Empty response with history, retrying WITHOUT history...");
+                $context['chat_history'] = [];
+                $contents = [];
+                $contents[] = ['role' => 'user', 'parts' => $userParts];
+                continue;
+            }
+
+            // ─────────────────────────────────────────────────────────
+            // FIX: تجميع كل الـ functionCalls الموجودة بنفس الرد (مش أول
+            // وحدة بس). لو Gemini طلب أكثر من أداة بنفس الرسالة (مثلاً
+            // العميل قال "بدي صور السيارة وأبعادها")، لازم ننفذهم كلهم
+            // ونرجع functionResponse لكل واحد فيهم.
+            // ─────────────────────────────────────────────────────────
+            $functionCallParts = [];
+            $textOut            = '';
+
             foreach ($parts as $part) {
                 if (isset($part['functionCall'])) {
-                    $functionCall     = $part['functionCall'];
-                    $thoughtSignature = $part['thoughtSignature'] ?? null;
+                    if (!isset($part['thoughtSignature'])) {
+                        $part['thoughtSignature'] = 'context_engine_is_ok_to_proceed_without_signature';
+                    }
+                    $functionCallParts[] = $part;
                 } elseif (isset($part['text'])) {
                     $textOut .= $part['text'];
                 }
             }
 
-            if ($functionCall === null) {
+            if (empty($functionCallParts)) {
                 $textOut = trim($textOut);
                 if ($textOut === '') {
                     $finishReason = $response['candidates'][0]['finishReason'] ?? 'unknown';
@@ -164,44 +186,46 @@ final class ChatController
                 return $textOut !== '' ? $textOut : 'عذراً، ما قدرت أجاوب هلق. جرب تسأل بطريقة تانية.';
             }
 
-            $fnName = $functionCall['name'] ?? '';
-            $fnArgs = $functionCall['args'] ?? [];
-
-            // نفس منطق الأعمال بالضبط اللي Vapi بيستخدمه
-            $result = $this->tools->executeTool($fnName, $fnArgs, $sessionId, $context);
-
-            // args فاضية لازم تترمّز كـ {} مش [] عشان Gemini يقبلها بالجولة الجاية
-            $argsForReplay = $functionCall['args'] ?? [];
-            if (empty($argsForReplay)) {
-                $argsForReplay = new \stdClass();
+            // نبني model parts نظيفة — args فاضية لازم تكون {} مش []
+            $cleanModelParts = [];
+            foreach ($functionCallParts as $fcPart) {
+                $argsForReplay = $fcPart['functionCall']['args'] ?? [];
+                if (empty($argsForReplay) || $argsForReplay === []) {
+                    $argsForReplay = new \stdClass();
+                }
+                $cleanPart = [
+                    'functionCall' => [
+                        'name' => $fcPart['functionCall']['name'] ?? '',
+                        'args' => $argsForReplay,
+                    ],
+                ];
+                if (isset($fcPart['thoughtSignature'])) {
+                    $cleanPart['thoughtSignature'] = $fcPart['thoughtSignature'];
+                }
+                $cleanModelParts[] = $cleanPart;
             }
+            $contents[] = ['role' => 'model', 'parts' => $cleanModelParts];
 
-            // ثبّت استدعاء الأداة ونتيجتها بالمحادثة قبل الجولة الجاية.
-            // موديلات Gemini 3.x بترجع thoughtSignature مرفقة مع الـ functionCall،
-            // ولازم نرجّعها بالضبط متل ما اجت وإلا Gemini بيرفض الطلب بـ 400
-            // ("Function call is missing a thought_signature in functionCall parts").
-            $modelPart = [
-                'functionCall' => [
-                    'name' => $fnName,
-                    'args' => $argsForReplay,
-                ],
-            ];
-            if ($thoughtSignature !== null) {
-                $modelPart['thoughtSignature'] = $thoughtSignature;
-            }
+            // ننفذ كل أداة بالترتيب
+            $functionResponseParts = [];
+            foreach ($functionCallParts as $fcPart) {
+                $fc     = $fcPart['functionCall'];
+                $fnName = $fc['name'] ?? '';
+                $fnArgs = $fc['args'] ?? [];
 
-            $contents[] = [
-                'role'  => 'model',
-                'parts' => [$modelPart],
-            ];
-            $contents[] = [
-                'role'  => 'function',
-                'parts' => [[
+                $result = $this->tools->executeTool($fnName, $fnArgs, $sessionId, $context);
+
+                $functionResponseParts[] = [
                     'functionResponse' => [
                         'name'     => $fnName,
                         'response' => $result,
                     ],
-                ]],
+                ];
+            }
+
+            $contents[] = [
+                'role'  => 'function',
+                'parts' => $functionResponseParts,
             ];
         }
 

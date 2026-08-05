@@ -350,7 +350,23 @@ final class WhatsAppController
             ]);
 
             $response = $this->callGemini($url, $payload);
-            $parts    = $response['candidates'][0]['content']['parts'] ?? [];
+            $geminiHttpCode = $response['_httpCode'] ?? 0;
+            unset($response['_httpCode']);
+
+            // ─────────────────────────────────────────────────────────
+            // FALLBACK: لو Gemini رجع 400 (INVALID_ARGUMENT) بأول hop
+            // (يعني مع التاريخ)، غالباً السبب تاريخ محادثة فاسد بـ Redis.
+            // نمسح التاريخ ونعيد المحاولة بالرسالة الحالية فقط.
+            // ─────────────────────────────────────────────────────────
+            if ($geminiHttpCode === 400 && $hop === 0 && !empty($history)) {
+                error_log("[WhatsAppController] Got 400 with history, retrying WITHOUT history...");
+                $context['chat_history'] = [];
+                $contents = [];
+                $contents[] = ['role' => 'user', 'parts' => $userParts];
+                continue;
+            }
+
+            $parts = $response['candidates'][0]['content']['parts'] ?? [];
 
             // ─────────────────────────────────────────────────────────
             // FIX: تجميع كل الـ functionCalls الموجودة بنفس الرد (مش أول
@@ -387,7 +403,27 @@ final class WhatsAppController
 
             // رد الموديل الكامل بكل الـ functionCalls يلي طلبها بنفس الدور،
             // كتلة parts واحدة (مش عدة أدوار model منفصلة).
-            $contents[] = ['role' => 'model', 'parts' => $functionCallParts];
+            // مهم: لازم ننظف الـ args عشان PHP json_encode بيحول
+            // الـ array الفاضي [] لـ JSON array بدل object {},
+            // وهاد بيسبب خطأ 400 من Gemini API.
+            $cleanModelParts = [];
+            foreach ($functionCallParts as $fcPart) {
+                $argsForReplay = $fcPart['functionCall']['args'] ?? [];
+                if (empty($argsForReplay) || $argsForReplay === []) {
+                    $argsForReplay = new \stdClass();
+                }
+                $cleanPart = [
+                    'functionCall' => [
+                        'name' => $fcPart['functionCall']['name'] ?? '',
+                        'args' => $argsForReplay,
+                    ],
+                ];
+                if (isset($fcPart['thoughtSignature'])) {
+                    $cleanPart['thoughtSignature'] = $fcPart['thoughtSignature'];
+                }
+                $cleanModelParts[] = $cleanPart;
+            }
+            $contents[] = ['role' => 'model', 'parts' => $cleanModelParts];
 
             // ننفذ كل أداة بالترتيب، ونبني functionResponse مطابق لكل واحدة
             $functionResponseParts = [];
@@ -449,10 +485,12 @@ final class WhatsAppController
 
         if ($httpCode !== 200 || !$response) {
             error_log("[WhatsAppController] Gemini error httpCode={$httpCode} body=" . substr((string) $response, 0, 800));
-            return [];
+            return ['_httpCode' => $httpCode];
         }
 
-        return json_decode($response, true) ?? [];
+        $parsed = json_decode($response, true) ?? [];
+        $parsed['_httpCode'] = $httpCode;
+        return $parsed;
     }
 
     private function jsonResponse(array $data): void
