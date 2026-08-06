@@ -454,10 +454,11 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
                 'zdrEnabled'   => false,
             ],
 
-            // ── server (بدل serverUrl القديمة) ──────────────────────
+            // ── server (بدل serverUرl القديمة) ──────────────────────
             'server' => [
                 'url'            => $_ENV['VAPI_WEBHOOK_URL'] ?? '',
                 'timeoutSeconds' => 20,
+                'secret'         => $_ENV['VAPI_WEBHOOK_SECRET'] ?? '',
             ],
         ];
     }
