@@ -201,11 +201,9 @@ final class WhatsAppController
         });
 
         error_log("[WhatsAppController] DEBUG calling Gemini now...");
-        $reply = $this->runConversation($text, $history, $sessionId, $context, $mediaPart);
+        $reply = $this->runConversation($text, $history, $sessionId, $context, $mediaPart, $historyPlaceholder);
         error_log("[WhatsAppController] DEBUG Gemini returned reply: " . mb_substr($reply, 0, 200));
 
-        $history[] = ['role' => 'user',  'text' => $historyPlaceholder ?? $text, 'timestamp' => $now];
-        $history[] = ['role' => 'model', 'text' => $reply,                       'timestamp' => $now];
         if (count($history) > self::HISTORY_LIMIT) {
             $history = array_slice($history, -self::HISTORY_LIMIT);
         }
@@ -313,17 +311,21 @@ final class WhatsAppController
      */
     private function runConversation(
         string $message,
-        array $history,
+        array &$history,
         string $sessionId,
         array &$context,
-        ?array $mediaPart = null
+        ?array $mediaPart = null,
+        ?string $historyPlaceholder = null
     ): string {
         $systemPrompt = $this->tools->buildWhatsAppSystemPrompt($sessionId);
         $toolsPayload = $this->tools->getGeminiToolDeclarations();
 
         $contents = [];
         foreach ($history as $h) {
-            $contents[] = ['role' => $h['role'], 'parts' => [['text' => $h['text']]]];
+            $contents[] = [
+                'role'  => $h['role'],
+                'parts' => $h['parts'] ?? [['text' => $h['text'] ?? '']],
+            ];
         }
 
         // الجولة الحالية: لو في وسائط (صورة/صوت)، تنضاف قبل النص كـ part منفصل
@@ -333,6 +335,14 @@ final class WhatsAppController
         }
         $userParts[] = ['text' => $message];
         $contents[]  = ['role' => 'user', 'parts' => $userParts];
+
+        // Add current user message to history
+        $history[] = [
+            'role'      => 'user',
+            'parts'     => $userParts,
+            'text'      => $historyPlaceholder ?? $message,
+            'timestamp' => time(),
+        ];
 
         $apiKey = $_ENV['GEMINI_API_KEY'] ?? '';
         $url    = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={$apiKey}";
@@ -361,8 +371,16 @@ final class WhatsAppController
             if ($geminiHttpCode === 400 && $hop === 0 && !empty($history)) {
                 error_log("[WhatsAppController] Got 400 with history, retrying WITHOUT history...");
                 $context['chat_history'] = [];
+                $history = [];
                 $contents = [];
                 $contents[] = ['role' => 'user', 'parts' => $userParts];
+
+                $history[] = [
+                    'role'      => 'user',
+                    'parts'     => $userParts,
+                    'text'      => $historyPlaceholder ?? $message,
+                    'timestamp' => time(),
+                ];
                 continue;
             }
 
@@ -392,7 +410,17 @@ final class WhatsAppController
                     $finishReason = $response['candidates'][0]['finishReason'] ?? 'unknown';
                     error_log("[WhatsAppController] Empty response from Gemini. finishReason={$finishReason} fullResponse=" . json_encode($response, JSON_UNESCAPED_UNICODE));
                 }
-                return $textOut !== '' ? $textOut : 'عذراً، ما قدرت أجاوب هلق. جرب تسأل بطريقة تانية.';
+                
+                $finalReply = $textOut !== '' ? $textOut : 'عذراً، ما قدرت أجاوب هلق. جرب تسأل بطريقة تانية.';
+                
+                $history[] = [
+                    'role'      => 'model',
+                    'parts'     => [['text' => $finalReply]],
+                    'text'      => $finalReply,
+                    'timestamp' => time(),
+                ];
+                
+                return $finalReply;
             }
 
             // رد الموديل الكامل بكل الـ functionCalls يلي طلبها بنفس الدور،
@@ -419,6 +447,12 @@ final class WhatsAppController
             }
             $contents[] = ['role' => 'model', 'parts' => $cleanModelParts];
 
+            $history[] = [
+                'role'      => 'model',
+                'parts'     => $cleanModelParts,
+                'timestamp' => time(),
+            ];
+
             // ننفذ كل أداة بالترتيب، ونبني functionResponse مطابق لكل واحدة
             $functionResponseParts = [];
             foreach ($functionCallParts as $fcPart) {
@@ -440,9 +474,22 @@ final class WhatsAppController
                 'role'  => 'function',
                 'parts' => $functionResponseParts,
             ];
+
+            $history[] = [
+                'role'      => 'function',
+                'parts'     => $functionResponseParts,
+                'timestamp' => time(),
+            ];
         }
 
-        return 'في ضغط على النظام هلق، جرب تسأل مرة تانية بعد شوي.';
+        $finalReply = 'في ضغط على النظام هلق، جرب تسأل مرة تانية بعد شوي.';
+        $history[] = [
+            'role'      => 'model',
+            'parts'     => [['text' => $finalReply]],
+            'text'      => $finalReply,
+            'timestamp' => time(),
+        ];
+        return $finalReply;
     }
 
     private function callGemini(string $url, string $payload, int $retries = 2): array

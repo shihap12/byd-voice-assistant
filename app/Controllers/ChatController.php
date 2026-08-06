@@ -81,8 +81,6 @@ final class ChatController
 
         $reply = $this->runConversation($message, $history, $sessionId, $context);
 
-        $history[] = ['role' => 'user',  'text' => $message, 'timestamp' => $now];
-        $history[] = ['role' => 'model', 'text' => $reply,   'timestamp' => $now];
         if (count($history) > self::HISTORY_LIMIT) {
             $history = array_slice($history, -self::HISTORY_LIMIT);
         }
@@ -113,17 +111,28 @@ final class ChatController
      * يشغّل حلقة Gemini function-calling باستخدام نفس أدوات Vapi بالضبط،
      * لحد ما يوصل لجواب نهائي (بدون استدعاء أداة) أو ينتهي عدد الجولات.
      */
-    private function runConversation(string $message, array $history, string $sessionId, array &$context): string
+    private function runConversation(string $message, array &$history, string $sessionId, array &$context): string
     {
         $systemPrompt = $this->tools->buildChatSystemPrompt($sessionId);
         $toolsPayload = $this->tools->getGeminiToolDeclarations();
 
         $contents = [];
         foreach ($history as $h) {
-            $contents[] = ['role' => $h['role'], 'parts' => [['text' => $h['text']]]];
+            $contents[] = [
+                'role'  => $h['role'],
+                'parts' => $h['parts'] ?? [['text' => $h['text'] ?? '']],
+            ];
         }
         $userParts = [['text' => $message]];
         $contents[] = ['role' => 'user', 'parts' => $userParts];
+
+        // Add current user message to history
+        $history[] = [
+            'role'      => 'user',
+            'parts'     => $userParts,
+            'text'      => $message,
+            'timestamp' => time(),
+        ];
 
         $apiKey = $_ENV['GEMINI_API_KEY'] ?? '';
         $url    = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={$apiKey}";
@@ -152,8 +161,16 @@ final class ChatController
             if (empty($parts) && $hop === 0 && !empty($history)) {
                 error_log("[ChatController] Empty response with history, retrying WITHOUT history...");
                 $context['chat_history'] = [];
+                $history = [];
                 $contents = [];
                 $contents[] = ['role' => 'user', 'parts' => $userParts];
+
+                $history[] = [
+                    'role'      => 'user',
+                    'parts'     => $userParts,
+                    'text'      => $message,
+                    'timestamp' => time(),
+                ];
                 continue;
             }
 
@@ -180,7 +197,17 @@ final class ChatController
                     $finishReason = $response['candidates'][0]['finishReason'] ?? 'unknown';
                     error_log("[ChatController] Empty response from Gemini. finishReason={$finishReason} raw=" . json_encode($response, JSON_UNESCAPED_UNICODE));
                 }
-                return $textOut !== '' ? $textOut : 'عذراً، ما قدرت أجاوب هلق. جرب تسأل بطريقة تانية.';
+                
+                $finalReply = $textOut !== '' ? $textOut : 'عذراً، ما قدرت أجاوب هلق. جرب تسأل بطريقة تانية.';
+                
+                $history[] = [
+                    'role'      => 'model',
+                    'parts'     => [['text' => $finalReply]],
+                    'text'      => $finalReply,
+                    'timestamp' => time(),
+                ];
+                
+                return $finalReply;
             }
 
             // نبني model parts نظيفة — args فاضية لازم تكون {} مش []
@@ -203,6 +230,12 @@ final class ChatController
             }
             $contents[] = ['role' => 'model', 'parts' => $cleanModelParts];
 
+            $history[] = [
+                'role'      => 'model',
+                'parts'     => $cleanModelParts,
+                'timestamp' => time(),
+            ];
+
             // ننفذ كل أداة بالترتيب
             $functionResponseParts = [];
             foreach ($functionCallParts as $fcPart) {
@@ -224,9 +257,22 @@ final class ChatController
                 'role'  => 'function',
                 'parts' => $functionResponseParts,
             ];
+
+            $history[] = [
+                'role'      => 'function',
+                'parts'     => $functionResponseParts,
+                'timestamp' => time(),
+            ];
         }
 
-        return 'في ضغط على النظام هلق، جرب تسأل مرة تانية بعد شوي.';
+        $finalReply = 'في ضغط على النظام هلق، جرب تسأل مرة تانية بعد شوي.';
+        $history[] = [
+            'role'      => 'model',
+            'parts'     => [['text' => $finalReply]],
+            'text'      => $finalReply,
+            'timestamp' => time(),
+        ];
+        return $finalReply;
     }
 
     private function callGemini(string $url, string $payload, int $retries = 2): array
