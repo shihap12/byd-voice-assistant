@@ -168,9 +168,6 @@ final class ChatController
 
             foreach ($parts as $part) {
                 if (isset($part['functionCall'])) {
-                    if (!isset($part['thoughtSignature'])) {
-                        $part['thoughtSignature'] = 'context_engine_is_ok_to_proceed_without_signature';
-                    }
                     $functionCallParts[] = $part;
                 } elseif (isset($part['text'])) {
                     $textOut .= $part['text'];

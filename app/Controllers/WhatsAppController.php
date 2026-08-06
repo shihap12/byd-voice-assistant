@@ -380,12 +380,6 @@ final class WhatsAppController
 
             foreach ($parts as $part) {
                 if (isset($part['functionCall'])) {
-                    // Gemini 3 بيطلب thoughtSignature إلزامياً بكل functionCall —
-                    // لو مش راجعة (بيصير أحياناً بـ flash-lite)، نحط placeholder
-                    // ثابت بدل ما نتركها فاضية، لأنه غيابها بيسبب 400 INVALID_ARGUMENT.
-                    if (!isset($part['thoughtSignature'])) {
-                        $part['thoughtSignature'] = 'context_engine_is_ok_to_proceed_without_signature';
-                    }
                     $functionCallParts[] = $part;
                 } elseif (isset($part['text'])) {
                     $textOut .= $part['text'];
