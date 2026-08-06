@@ -857,7 +857,7 @@ private function checkAppointmentAvailability(array $params): array
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
-            'free_slots' => array_slice($freeSlots, 0, 20),
+            'free_slots' => $freeSlots,
             'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
         ];
     }
@@ -885,7 +885,7 @@ private function checkAppointmentAvailability(array $params): array
                 'success'       => false,
                 'error'         => 'OUTSIDE_WORKING_HOURS',
                 'working_hours' => $hours,
-                'free_slots'    => array_slice($freeSlots, 0, 20),
+                'free_slots'    => $freeSlots,
                 'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($date, $time),
             ];
         }
@@ -896,14 +896,14 @@ private function checkAppointmentAvailability(array $params): array
                 'available'  => true,
                 'date'       => $date,
                 'time'       => $time,
-                'free_slots' => array_slice($freeSlots, 0, 20),
+                'free_slots' => $freeSlots,
             ];
         }
 
         return [
             'success'    => true,
             'available'  => false,
-            'free_slots' => array_slice($freeSlots, 0, 20),
+            'free_slots' => $freeSlots,
             'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
         ];
     }
@@ -912,7 +912,7 @@ private function checkAppointmentAvailability(array $params): array
     return [
         'success'    => true,
         'available'  => !empty($freeSlots),
-        'free_slots' => array_slice($freeSlots, 0, 20),
+        'free_slots' => $freeSlots,
         'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date),
     ];
 }
