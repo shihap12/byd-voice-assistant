@@ -299,4 +299,48 @@ final class AppointmentModel
 
         return $this->db->execute('UPDATE appointments SET status = ? WHERE id = ?', [$status, $id]) > 0;
     }
-}
+
+    /**
+     * تعديل تفاصيل موعد كامل من صفحة الأدمن.
+     * يسمح بتعديل التاريخ والوقت والاسم والجوال والملاحظة.
+     */
+    public function updateDetails(int $id, array $data): bool
+    {
+        $fields = [];
+        $params = [];
+
+        if (isset($data['appointment_date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $data['appointment_date'])) {
+            $fields[]  = 'appointment_date = ?';
+            $params[]  = $data['appointment_date'];
+        }
+        if (isset($data['appointment_time']) && preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $data['appointment_time'])) {
+            $fields[]  = 'appointment_time = ?';
+            $params[]  = $data['appointment_time'];
+        }
+        if (isset($data['customer_name']) && trim($data['customer_name']) !== '') {
+            $fields[]  = 'customer_name = ?';
+            $params[]  = trim($data['customer_name']);
+        }
+        if (isset($data['phone_number']) && trim($data['phone_number']) !== '') {
+            $fields[]  = 'phone_number = ?';
+            $params[]  = trim($data['phone_number']);
+        }
+        if (array_key_exists('notes', $data)) {
+            $fields[]  = 'notes = ?';
+            $params[]  = $data['notes'] !== '' ? trim($data['notes']) : null;
+        }
+        if (isset($data['status'])) {
+            $fields[]  = 'status = ?';
+            $params[]  = $data['status'];
+        }
+
+        if (empty($fields)) {
+            return false;
+        }
+
+        $params[] = $id;
+        $sql = 'UPDATE appointments SET ' . implode(', ', $fields) . ' WHERE id = ?';
+
+        return $this->db->execute($sql, $params) > 0;
+    }
+}

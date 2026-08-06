@@ -288,6 +288,64 @@ final class AdminController
         echo json_encode(['success' => true]);
     }
 
+    /**
+     * تعديل تفاصيل موعد كاملة (التاريخ، الوقت، الاسم، الجوال، الملاحظة، الحالة).
+     * PATCH /admin/api/appointments/{id}/edit — محمي بـ CSRF.
+     */
+    public function apiEditAppointment(string $id): void
+    {
+        $this->startSession();
+        if ($this->getAuthenticatedAdmin() === null) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            return;
+        }
+
+        header('Content-Type: application/json');
+
+        $raw  = file_get_contents('php://input');
+        $body = json_decode($raw, true) ?? [];
+
+        $csrfToken = (string) ($body['csrf_token'] ?? '');
+        if (!Security::validateCsrfToken(session_id(), $csrfToken)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'رمز الحماية غير صالح أو منتهي، حاول مرة أخرى.']);
+            return;
+        }
+
+        $allowedStatuses = ['scheduled', 'cancelled', 'completed'];
+        $data = [];
+
+        if (!empty($body['appointment_date'])) $data['appointment_date'] = $body['appointment_date'];
+        if (!empty($body['appointment_time'])) $data['appointment_time'] = $body['appointment_time'];
+        if (!empty($body['customer_name']))    $data['customer_name']    = $body['customer_name'];
+        if (!empty($body['phone_number']))     $data['phone_number']     = $body['phone_number'];
+        if (array_key_exists('notes', $body))  $data['notes']            = $body['notes'];
+        if (!empty($body['status']) && in_array($body['status'], $allowedStatuses, true)) {
+            $data['status'] = $body['status'];
+        }
+
+        if (empty($data)) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'message' => 'لا توجد بيانات للتحديث.']);
+            return;
+        }
+
+        $appointmentModel = new \BYD\Models\AppointmentModel();
+        $updated = $appointmentModel->updateDetails((int) $id, $data);
+
+        if (!$updated) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'الموعد غير موجود أو لم يتغير شيء.']);
+            return;
+        }
+
+        // مسح كاش Redis للمواعيد عشان التحديثات تظهر فوراً
+        $this->redis->delete('cache:admin:appointments');
+
+        echo json_encode(['success' => true]);
+    }
+
     public function dashboard(): void
     {
         $this->startSession();

@@ -166,6 +166,10 @@ $router->add('POST', '/admin/api/appointments/{id}', function (string $id): void
     (new AdminController())->apiUpdateAppointmentStatus($id);
 });
 
+$router->add('PATCH', '/admin/api/appointments/{id}/edit', function (string $id): void {
+    (new AdminController())->apiEditAppointment($id);
+});
+
 $router->add('GET', '/admin/me', function (): void {
     (new AdminController())->apiMe();
 });
