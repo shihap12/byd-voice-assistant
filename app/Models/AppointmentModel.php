@@ -229,6 +229,67 @@ final class AppointmentModel
         return $this->db->queryOne('SELECT * FROM appointments WHERE id = ?', [$id]);
     }
 
+    /**
+     * البحث عن حجز مفعّل (scheduled) بناءً على رقم الجوال + الاسم.
+     * بيرجع أقرب حجز مستقبلي مرتّب بالتاريخ/الوقت.
+     */
+    public function findScheduledByPhoneAndName(string $phone, string $name): array|false
+    {
+        $today = date('Y-m-d');
+        $rows  = $this->db->query(
+            "SELECT * FROM appointments
+             WHERE phone_number = ?
+               AND customer_name LIKE ?
+               AND status = 'scheduled'
+               AND appointment_date >= ?
+             ORDER BY appointment_date ASC, appointment_time ASC
+             LIMIT 1",
+            [$phone, '%' . $name . '%', $today]
+        );
+        return $rows[0] ?? false;
+    }
+
+    /**
+     * بحث أشمل: بالرقم فقط (لو الاسم مش متطابق تماماً).
+     */
+    public function findScheduledByPhone(string $phone): array
+    {
+        $today = date('Y-m-d');
+        return $this->db->query(
+            "SELECT * FROM appointments
+             WHERE phone_number = ?
+               AND status = 'scheduled'
+               AND appointment_date >= ?
+             ORDER BY appointment_date ASC, appointment_time ASC
+             LIMIT 5",
+            [$phone, $today]
+        );
+    }
+
+    /**
+     * إلغاء موعد محدد (تحديث status لـ cancelled).
+     */
+    public function cancelById(int $id): bool
+    {
+        return $this->db->execute(
+            "UPDATE appointments SET status = 'cancelled' WHERE id = ? AND status = 'scheduled'",
+            [$id]
+        ) > 0;
+    }
+
+    /**
+     * تعديل تاريخ/وقت موعد موجود (reschedule) — بيبقى مفعّل.
+     */
+    public function rescheduleById(int $id, string $newDate, string $newTime): bool
+    {
+        return $this->db->execute(
+            "UPDATE appointments
+             SET appointment_date = ?, appointment_time = ?, status = 'scheduled'
+             WHERE id = ? AND status = 'scheduled'",
+            [$newDate, $newTime, $id]
+        ) > 0;
+    }
+
     public function updateStatus(int $id, string $status): bool
     {
         $allowed = ['scheduled', 'cancelled', 'completed'];
@@ -238,4 +299,4 @@ final class AppointmentModel
 
         return $this->db->execute('UPDATE appointments SET status = ? WHERE id = ?', [$status, $id]) > 0;
     }
-}
+}

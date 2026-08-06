@@ -582,6 +582,9 @@ PROMPT;
             'save_customer_feedback' => $this->saveCustomerFeedback($arguments, $callId, $context),
             'check_appointment_availability' => $this->checkAppointmentAvailability($arguments),
             'book_appointment'               => $this->bookAppointment($arguments, $callId, $context),
+            'find_appointment'               => $this->findAppointment($arguments),
+            'reschedule_appointment'         => $this->rescheduleAppointment($arguments, $callId),
+            'cancel_appointment'             => $this->cancelAppointment($arguments, $callId),
             default                  => ['error' => "دالة غير معروفة: {$functionName}"],
         };
     }
@@ -976,6 +979,187 @@ private function bookAppointment(array $params, string $callId, array &$context)
             'id'   => $id,
             'date' => $date,
             'time' => $time,
+        ],
+    ];
+}
+
+
+/**
+ * find_appointment
+ *
+ * يبحث عن موعد محجوز بناءً على رقم الجوال والاسم الثلاثي.
+ * يُستخدم قبل reschedule أو cancel للتحقق من وجود الموعد.
+ */
+private function findAppointment(array $params): array
+{
+    $rawName  = trim((string) ($params['customer_name'] ?? ''));
+    $rawPhone = trim((string) ($params['phone_number'] ?? ''));
+
+    if (empty($rawPhone)) {
+        return ['success' => false, 'error' => 'MISSING_PHONE'];
+    }
+
+    $normalizedPhone = $this->normalizePhone($rawPhone);
+    if ($normalizedPhone === null) {
+        return ['success' => false, 'error' => 'INVALID_PHONE'];
+    }
+
+    // ابحث بالرقم + الاسم أولاً (أدق)
+    if ($rawName !== '') {
+        $appt = $this->appointmentModel->findScheduledByPhoneAndName($normalizedPhone, $rawName);
+        if ($appt !== false) {
+            return [
+                'success'     => true,
+                'found'       => true,
+                'appointment' => [
+                    'id'   => $appt['id'],
+                    'date' => $appt['appointment_date'],
+                    'time' => substr($appt['appointment_time'], 0, 5),
+                    'name' => $appt['customer_name'],
+                ],
+            ];
+        }
+    }
+
+    // بحث بالرقم فقط (fallback)
+    $rows = $this->appointmentModel->findScheduledByPhone($normalizedPhone);
+    if (empty($rows)) {
+        return ['success' => true, 'found' => false, 'error' => 'NO_APPOINTMENT_FOUND'];
+    }
+
+    // لو في أكثر من موعد، رجّع الأقرب
+    $appt = $rows[0];
+    return [
+        'success'     => true,
+        'found'       => true,
+        'appointment' => [
+            'id'   => $appt['id'],
+            'date' => $appt['appointment_date'],
+            'time' => substr($appt['appointment_time'], 0, 5),
+            'name' => $appt['customer_name'],
+        ],
+    ];
+}
+
+/**
+ * reschedule_appointment
+ *
+ * يعدّل تاريخ/وقت موعد موجود. يتطلب appointment_id (من find_appointment)
+ * وكذلك التاريخ والوقت الجديدين. يتحقق من توفر السلوت الجديد أولاً.
+ */
+private function rescheduleAppointment(array $params, string $callId): array
+{
+    $apptId  = (int) ($params['appointment_id'] ?? 0);
+    $newDate = trim((string) ($params['new_date'] ?? ''));
+    $newTime = trim((string) ($params['new_time'] ?? ''));
+
+    if ($apptId <= 0) {
+        return ['success' => false, 'error' => 'MISSING_APPOINTMENT_ID'];
+    }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $newDate) || !preg_match('/^\d{2}:\d{2}$/', $newTime)) {
+        return ['success' => false, 'error' => 'INVALID_DATETIME'];
+    }
+
+    // تحقق من وجود الموعد
+    $appt = $this->appointmentModel->findById($apptId);
+    if (!$appt || $appt['status'] !== 'scheduled') {
+        return ['success' => false, 'error' => 'APPOINTMENT_NOT_FOUND'];
+    }
+
+    $hours   = $this->appointmentModel->getWorkingHours();
+    $today   = date('Y-m-d');
+    $nowTime = date('H:i');
+    $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($newDate === $today && $newTime <= $nowTime) {
+        return [
+            'success'    => false,
+            'error'      => 'TIME_PASSED',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($newDate, $newTime),
+        ];
+    }
+
+    if ($newDate < $today || $newDate > $maxDate || !AppointmentModel::isWorkingDay($newDate)) {
+        return [
+            'success'    => false,
+            'error'      => 'INVALID_DAY',
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot(max($newDate, $today), $newTime),
+        ];
+    }
+
+    if ($newTime < $hours['start'] || $newTime >= $hours['end']) {
+        return [
+            'success'       => false,
+            'error'         => 'OUTSIDE_WORKING_HOURS',
+            'working_hours' => $hours,
+            'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($newDate, $newTime),
+        ];
+    }
+
+    // احسب السلوتات المتاحة لليوم المطلوب (مع استبعاد الموعد الحالي مؤقتاً من الحساب)
+    if (!$this->appointmentModel->isSlotFree($newDate, $newTime, $hours['slot_minutes'])) {
+        // السلوت مأخوذ من موعد آخر (مش الموعد الحالي نفسه)
+        $freeSlots = $this->appointmentModel->getFreeSlotsForDate($newDate);
+        return [
+            'success'    => false,
+            'error'      => 'SLOT_TAKEN',
+            'free_slots' => array_slice($freeSlots, 0, 6),
+            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($newDate, $newTime),
+        ];
+    }
+
+    $ok = $this->appointmentModel->rescheduleById($apptId, $newDate, $newTime);
+    if (!$ok) {
+        return ['success' => false, 'error' => 'RESCHEDULE_FAILED'];
+    }
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:appointments');
+    error_log("[VapiWebhook] [reschedule_appointment] callId={$callId} id={$apptId} new={$newDate} {$newTime}");
+
+    return [
+        'success'     => true,
+        'status'      => 'rescheduled',
+        'appointment' => [
+            'id'   => $apptId,
+            'date' => $newDate,
+            'time' => $newTime,
+        ],
+    ];
+}
+
+/**
+ * cancel_appointment
+ *
+ * يلغي موعد موجود ويضع status = cancelled.
+ */
+private function cancelAppointment(array $params, string $callId): array
+{
+    $apptId = (int) ($params['appointment_id'] ?? 0);
+
+    if ($apptId <= 0) {
+        return ['success' => false, 'error' => 'MISSING_APPOINTMENT_ID'];
+    }
+
+    $appt = $this->appointmentModel->findById($apptId);
+    if (!$appt || $appt['status'] !== 'scheduled') {
+        return ['success' => false, 'error' => 'APPOINTMENT_NOT_FOUND'];
+    }
+
+    $ok = $this->appointmentModel->cancelById($apptId);
+    if (!$ok) {
+        return ['success' => false, 'error' => 'CANCEL_FAILED'];
+    }
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:appointments');
+    error_log("[VapiWebhook] [cancel_appointment] callId={$callId} id={$apptId}");
+
+    return [
+        'success' => true,
+        'status'  => 'cancelled',
+        'cancelled_appointment' => [
+            'id'   => $apptId,
+            'date' => $appt['appointment_date'],
+            'time' => substr($appt['appointment_time'], 0, 5),
         ],
     ];
 }
@@ -2265,6 +2449,29 @@ note_text: نص الملاحظة بس، ممنوع تحطي الاسم أو ال
 11. ممنوع تخترعي تاريخ أو وقت أو تقولي "تم الحجز" من عندك بدون ما تستخدمي book_appointment فعلياً وترجع success:true.
 12. ما تذكريش للعميل اسم أي أداة أو إنك "بتفحصي التوفر" — تصرفي بطبيعية زي موظفة بتشيك بالجدول.
 
+### تعديل موعد موجود (Reschedule)
+
+إذا طلب العميل تعديل موعده (مثل: "بدي أغير الموعد" / "بدي أحول الموعد لوقت ثاني" / "ما بقدر أجي بهاد اليوم"):
+1. خدي منه اسمه الثلاثي ورقم جواله (إذا مش موجودين من قبل).
+2. استخدمي find_appointment بالاسم والرقم للبحث عن الموعد.
+3. إذا رجعت found: false → أخبري العميل بشكل طبيعي إنك ما لقيتي موعد محجوز بهاد الاسم والرقم، واسأليه إذا بدو يحجز موعد جديد.
+4. إذا رجعت found: true → أكدي للعميل موعده الحالي (يوم + وقت)، واسأليه عن اليوم والوقت الجديد.
+5. استخدمي check_appointment_availability للتحقق من الموعد الجديد.
+6. بعد موافقة العميل الصريحة على الموعد الجديد، استخدمي reschedule_appointment بـ appointment_id والتاريخ والوقت الجديدين.
+7. إذا رجعت success:true → أكدي التعديل بجملة طبيعية مثل: "تمام، عدّلتلك الموعد ليوم [كذا] الساعة [كذا]، منستناك."
+8. إذا رجعت SLOT_TAKEN → اعرضي free_slots أو suggestion، واطلبي موافقة العميل من جديد.
+
+### إلغاء موعد (Cancel)
+
+إذا طلب العميل إلغاء موعده (مثل: "بدي ألغي الموعد" / "ما رح أجي" / "لغّي حجزي"):
+1. خدي منه اسمه الثلاثي ورقم جواله (إذا مش موجودين من قبل).
+2. استخدمي find_appointment بالاسم والرقم للبحث عن الموعد.
+3. إذا رجعت found: false → أخبري العميل بشكل طبيعي إنك ما لقيتي موعد محجوز، واسأليه إذا عنده استفسار تاني.
+4. إذا رجعت found: true → أكدي للعميل موعده الحالي (يوم + وقت)، واسأليه تأكيداً صريحاً: "بدك فعلاً ألغي الموعد يوم [كذا] الساعة [كذا]؟"
+5. فقط بعد تأكيده الصريح (إي / نعم / أيوه)، استخدمي cancel_appointment بـ appointment_id.
+6. إذا رجعت success:true → أكدي الإلغاء بجملة طبيعية مثل: "تمام، تم إلغاء موعدك. إذا بدك تحجز موعد جديد بأي وقت، احكيلي."
+7. إذا رفض التأكيد → ابقي الموعد ولا تلغيه، وأخبريه إن الموعد لا يزال محجوزاً.
+
 
 ## 7. آلية التنفيذ
 
@@ -3111,6 +3318,8 @@ PROMPT;
 - ملاحظة/شكوى/طلب متابعة واضح مع اسم ورقم جوال → save_customer_note (شوفي قسم 5)
 - رأي عن التجربة (نادراً بالشات، بس إذا صار) → save_customer_feedback
 - بدو يحجز موعد لزيارة الفرع أو يسأل "امتى بقدر أجي" → check_appointment_availability ثم book_appointment (شوفي قسم 5.5)
+- بدو يعدّل موعده أو يغيره → find_appointment أولاً، ثم check_appointment_availability، ثم reschedule_appointment
+- بدو يلغي موعده → find_appointment أولاً، ثم cancel_appointment بعد تأكيده
 
 كل سؤال يحتاج بيانات فعلية (مواصفات، أسعار، ألوان، ضمان، مقارنة) لازم يمر عبر الأداة المناسبة أولاً — ممنوع تجاوبي من عندك أو تخمّني رقم.
 
@@ -3158,6 +3367,28 @@ PROMPT;
 9. إذا رجعت SLOT_TAKEN أو أي خطأ توفر تاني → اعرضي البديل الجديد واطلبي موافقة العميل من جديد.
 10. ممنوع نهائياً تحجزي موعد بيوم جمعة، أو بره الدوام، أو بعد تاريخ {$maxBookDate}.
 11. ممنوع تخترعي تاريخ أو وقت أو تقولي "تم الحجز" بدون ما تستدعي book_appointment فعلياً وترجع success:true.
+
+### تعديل موعد موجود (Reschedule)
+
+إذا طلب العميل تعديل موعده (مثل: "بدي أغير الموعد" / "بدي أحول الموعد لوقت ثاني"):
+1. خدي منه اسمه الثلاثي ورقم جواله (إذا مش موجودين من قبل).
+2. استخدمي find_appointment بالاسم والرقم للبحث عن الموعد.
+3. إذا رجعت found: false → أخبري العميل بشكل طبيعي إنك ما لقيتي موعد محجوز، واسأليه إذا بدو يحجز موعد جديد.
+4. إذا رجعت found: true → أكدي موعده الحالي (يوم + وقت)، واسأله عن اليوم والوقت الجديد.
+5. استخدمي check_appointment_availability للتحقق من الموعد الجديد.
+6. بعد موافقة العميل الصريحة، استخدمي reschedule_appointment بـ appointment_id والتاريخ والوقت الجديدين.
+7. إذا رجعت success:true → أكدي التعديل بجملة طبيعية.
+8. إذا رجعت SLOT_TAKEN → اعرضي free_slots أو suggestion واطلبي اختياره.
+
+### إلغاء موعد (Cancel)
+
+إذا طلب العميل إلغاء موعده (مثل: "بدي ألغي الموعد" / "لغّي حجزي"):
+1. خدي منه اسمه الثلاثي ورقم جواله (إذا مش موجودين من قبل).
+2. استخدمي find_appointment بالاسم والرقم للبحث عن الموعد.
+3. إذا رجعت found: false → أخبري العميل بشكل طبيعي إنك ما لقيتي موعد محجوز.
+4. إذا رجعت found: true → أكدي موعده الحالي واطلب تأكيداً صريحاً بالإلغاء.
+5. فقط بعد تأكيده الصريح، استخدمي cancel_appointment بـ appointment_id.
+6. إذا رجعت success:true → أكدي الإلغاء بجملة طبيعية.
 
 ## 6. سياق المحادثة
 
@@ -3649,6 +3880,78 @@ PROMPT;
                 ],
             ],
             'required' => ['customer_name', 'phone_number', 'appointment_date', 'appointment_time'],
+        ],
+    ],
+    'messages' => [
+        ['type' => 'request-start', 'content' => ''],
+    ],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'find_appointment',
+        'description' => 'البحث عن موعد محجوز لعميل بناءً على اسمه الثلاثي ورقم جواله. استخدميها دايماً أولاً لما يطلب العميل تعديل موعده أو إلغاءه، عشان تجيبي appointment_id الصح اللي تحتاجيه لـ reschedule_appointment أو cancel_appointment.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'customer_name' => [
+                    'type'        => 'string',
+                    'description' => 'اسم العميل الثلاثي كما قاله',
+                ],
+                'phone_number' => [
+                    'type'        => 'string',
+                    'description' => 'رقم جوال العميل كما قاله',
+                ],
+            ],
+            'required' => ['phone_number'],
+        ],
+    ],
+    'messages' => [
+        ['type' => 'request-start', 'content' => ''],
+    ],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'reschedule_appointment',
+        'description' => 'تعديل تاريخ أو وقت موعد محجوز موجود مسبقاً. لازم تستخدمي find_appointment أولاً لتجيبي appointment_id، ثم check_appointment_availability للتحقق من توفر الموعد الجديد، وبعد موافقة العميل الصريحة استخدمي هاي الأداة.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'appointment_id' => [
+                    'type'        => 'integer',
+                    'description' => 'رقم الموعد الموجود (من find_appointment)',
+                ],
+                'new_date' => [
+                    'type'        => 'string',
+                    'description' => 'التاريخ الجديد بصيغة YYYY-MM-DD',
+                ],
+                'new_time' => [
+                    'type'        => 'string',
+                    'description' => 'الوقت الجديد بصيغة HH:MM',
+                ],
+            ],
+            'required' => ['appointment_id', 'new_date', 'new_time'],
+        ],
+    ],
+    'messages' => [
+        ['type' => 'request-start', 'content' => ''],
+    ],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'cancel_appointment',
+        'description' => 'إلغاء موعد محجوز موجود مسبقاً. لازم تستخدمي find_appointment أولاً لتجيبي appointment_id، ثم تطلبي تأكيداً صريحاً من العميل قبل الإلغاء، وبعدها فقط استخدمي هاي الأداة.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'appointment_id' => [
+                    'type'        => 'integer',
+                    'description' => 'رقم الموعد المراد إلغاؤه (من find_appointment)',
+                ],
+            ],
+            'required' => ['appointment_id'],
         ],
     ],
     'messages' => [
