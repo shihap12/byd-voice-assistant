@@ -183,16 +183,15 @@ final class WhatsAppController
         $phoneNumber = explode('@', $chatId)[0];
         $sessionId   = "whatsapp:{$phoneNumber}";
 
-        // تأكيد وجود سجل عميل + سجل "مكالمة" منطقي، عشان نقدر نستخدم نفس
-        // أدوات save_customer_note / save_customer_feedback الموجودة أصلاً بدون أي تعديل عليهم
-        $this->ensureCustomerAndCallRecord($phoneNumber, $senderName, $sessionId);
-
+        // تأكيد وجود سجل عميل + سجل "مكالمة" منطقي، ونقل اسم ورقم العميل للسياق
         $context = $this->redis->getContext($sessionId) ?? [
             'session_id'  => $sessionId,
             'started_at'  => time(),
             'car_focus'   => null,
             'query_count' => 0,
         ];
+
+        $this->ensureCustomerAndCallRecord($phoneNumber, $senderName, $sessionId, $context);
 
         $history = $context['chat_history'] ?? [];
         $now     = time();
@@ -279,20 +278,33 @@ final class WhatsAppController
 
     /**
      * ينشئ/يحدّث سجل customers + سجل calls منطقي بربط call_id = sessionId
-     * عشان أدوات save_customer_note و save_customer_feedback (اللي بتعتمد
-     * على جدول calls لجلب بيانات العميل) تشتغل بدون أي تعديل عليها.
+     * ويسترجع اسم ورقم العميل المحفوظين تلقائياً لإلغاء ضرورة إدخالهما مجدداً.
      */
-    private function ensureCustomerAndCallRecord(string $phoneNumber, string $senderName, string $sessionId): void
+    private function ensureCustomerAndCallRecord(string $phoneNumber, string $senderName, string $sessionId, array &$context): void
     {
         $db = \BYD\Models\Database::getInstance();
 
-        $customer = $db->queryOne('SELECT id FROM customers WHERE phone_number = ?', [$phoneNumber]);
-        if (!$customer) {
-            $db->execute(
-                'INSERT INTO customers (phone_number, name) VALUES (?, ?)',
-                [$phoneNumber, $senderName !== '' ? $senderName : null]
+        // 1. فحص هل العميل موجود بالداتابيز برقم الواتساب
+        $customer = $db->queryOne('SELECT id, name, phone_number FROM customers WHERE phone_number = ?', [$phoneNumber]);
+
+        // لو مش موجود اسم بجدول customers، نفحص جدول appointments لو كان حجز سابقاً بهاد الرقم
+        if (!$customer || empty($customer['name'])) {
+            $appt = $db->queryOne(
+                "SELECT customer_name FROM appointments WHERE phone_number = ? AND customer_name IS NOT NULL AND customer_name != '' ORDER BY id DESC LIMIT 1",
+                [$phoneNumber]
             );
-            $customer = $db->queryOne('SELECT id FROM customers WHERE phone_number = ?', [$phoneNumber]);
+            $foundName = !empty($appt['customer_name']) ? $appt['customer_name'] : ($senderName !== '' ? $senderName : null);
+
+            if (!$customer) {
+                $db->execute(
+                    'INSERT INTO customers (phone_number, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = COALESCE(VALUES(name), name)',
+                    [$phoneNumber, $foundName]
+                );
+                $customer = $db->queryOne('SELECT id, name, phone_number FROM customers WHERE phone_number = ?', [$phoneNumber]);
+            } elseif ($foundName && empty($customer['name'])) {
+                $db->execute('UPDATE customers SET name = ? WHERE id = ?', [$foundName, $customer['id']]);
+                $customer['name'] = $foundName;
+            }
         }
 
         $customerId = $customer ? (int) $customer['id'] : null;
@@ -303,6 +315,11 @@ final class WhatsAppController
              ON DUPLICATE KEY UPDATE status = 'whatsapp', updated_at = NOW()",
             [$sessionId, $customerId, $sessionId]
         );
+
+        $context['customer_phone'] = $phoneNumber;
+        if (!empty($customer['name'])) {
+            $context['customer_name'] = $customer['name'];
+        }
     }
 
     /**
@@ -317,7 +334,9 @@ final class WhatsAppController
         ?array $mediaPart = null,
         ?string $historyPlaceholder = null
     ): string {
-        $systemPrompt = $this->tools->buildWhatsAppSystemPrompt($sessionId);
+        $customerName  = (string) ($context['customer_name']  ?? '');
+        $customerPhone = (string) ($context['customer_phone'] ?? '');
+        $systemPrompt = $this->tools->buildWhatsAppSystemPrompt($sessionId, $customerName, $customerPhone);
         $toolsPayload = $this->tools->getGeminiToolDeclarations();
 
         $contents = [];

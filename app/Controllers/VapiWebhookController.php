@@ -661,6 +661,21 @@ public function validateAndSaveCustomerNote(array $params, string $callId, array
         $context
     );
 
+    // ─── حفظ اسم العميل في customers تلقائياً (للواتساب) ────────────
+    if ($this->channel === 'whatsapp') {
+        try {
+            $db = \BYD\Models\Database::getInstance();
+            $db->execute(
+                "UPDATE customers SET name = ? WHERE phone_number = ? AND (name IS NULL OR name = '')",
+                [$cleanName, $normalizedPhone]
+            );
+        } catch (\Throwable) {
+            // non-critical
+        }
+        $context['customer_name']  = $cleanName;
+        $context['customer_phone'] = $normalizedPhone;
+    }
+
     return array_merge(['success' => true], $saveResult);
 }
 
@@ -998,6 +1013,23 @@ private function bookAppointment(array $params, string $callId, array &$context)
     ]);
 
     \BYD\Models\RedisClient::getInstance()->delete('cache:admin:appointments');
+
+    // ─── حفظ اسم العميل الكامل في customers تلقائياً ─────────────────
+    // لما يحجز عميل على الواتساب، نحدّث اسمه في جدول customers عشان
+    // يكون الاسم معروف في الجلسات القادمة ومش يضطر يكتبه مرة ثانية.
+    if ($this->channel === 'whatsapp') {
+        try {
+            $db = \BYD\Models\Database::getInstance();
+            $db->execute(
+                "UPDATE customers SET name = ? WHERE phone_number = ? AND (name IS NULL OR name = '')",
+                [$cleanName, $normalizedPhone]
+            );
+        } catch (\Throwable) {
+            // non-critical — don't fail the booking
+        }
+        $context['customer_name']  = $cleanName;
+        $context['customer_phone'] = $normalizedPhone;
+    }
 
     error_log("[VapiWebhook] [book_appointment] callId={$callId}, id={$id}, date={$date}, time={$time}, channel={$this->channel}");
 
@@ -3598,7 +3630,7 @@ PROMPT;
      * برومبت الشخصية لواتساب — نفس شخصية وأدوات الشات النصي بالضبط،
      * مع تعديل بسيط بالمقدمة وتنويه عن تنسيق واتساب.
      */
-    public function buildWhatsAppSystemPrompt(string $sessionId): string
+    public function buildWhatsAppSystemPrompt(string $sessionId, string $customerName = '', string $customerPhone = ''): string
     {
         $prompt = $this->buildChatSystemPrompt($sessionId);
 
@@ -3620,8 +3652,27 @@ PROMPT;
         . "- إذا ما قدرتِ تتعرفي على موديل واضح من الصورة (زاوية غير واضحة، سيارة مش BYD، أو الصورة مش سيارة أصلاً)، قولي للعميل بصراحة إنك ما قدرتِ تتعرفي على الموديل من الصورة، واطلبي منه يكتبلك اسم الموديل أو يبعت صورة أوضح.\n"
         . "- العميل ممكن كمان يبعتلك رسالة صوتية بدل ما يكتب. تعاملي معها بالضبط متل لو كتب نفس الكلام نصاً — افهمي محتواها وجاوبي بنفس القواعد والأسلوب، بدون أي إشارة إنك سمعتِ أو استمعتِ لرسالة صوتية.\n";
 
-    return $prompt;
-}
+        // ─── ملف العميل الثابت ────────────────────────────────────────
+        // لو في اسم ورقم محفوظين من سجلات سابقة، ضيفيهم للبرومبت لإلغاء
+        // ضرورة سؤال العميل عنهم مرة ثانية في أي عملية (حجز، ملاحظة...إلخ).
+        if ($customerName !== '' || $customerPhone !== '') {
+            $knownInfo = "\n\n## ملف العميل المعروف (هام جداً — لا تطلبي هاي المعلومات مجدداً)\n";
+            $knownInfo .= "بناءً على سجلات سابقة في النظام، هوية هاد العميل معروفة:\n";
+            if ($customerName !== '') {
+                $knownInfo .= "- **الاسم الكامل:** {$customerName}\n";
+            }
+            if ($customerPhone !== '') {
+                $knownInfo .= "- **رقم الجوال:** {$customerPhone}\n";
+            }
+            $knownInfo .= "\n**قواعد إلزامية:**\n";
+            $knownInfo .= "1. عند أي عملية تتطلب اسم العميل أو رقمه (حجز موعد، تعديل موعد، إلغاء موعد، تسجيل ملاحظة، تسجيل تقييم)، استخدمي الاسم والرقم أعلاه مباشرة من دون ما تطلبيهم من العميل إطلاقاً.\n";
+            $knownInfo .= "2. ممنوع تقولي للعميل إنك 'ما عندك اسمه' أو تطلبي منه إعادة إدخال بياناته طالما هي موجودة هنا.\n";
+            $knownInfo .= "3. إذا أعطى العميل اسماً أو رقماً مختلفاً أثناء المحادثة، استخدمي اللي أعطاه (لأنه قد يكون يحجز لشخص ثاني).\n";
+            $prompt .= $knownInfo;
+        }
+
+        return $prompt;
+    }
 
     
 
