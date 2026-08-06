@@ -4010,7 +4010,7 @@ PROMPT;
             'type'       => 'object',
             'properties' => [
                 'appointment_id' => [
-                    'type'        => 'integer',
+                    'type'        => 'string',
                     'description' => 'رقم الموعد الموجود (من find_appointment)',
                 ],
                 'new_date' => [
@@ -4038,7 +4038,7 @@ PROMPT;
             'type'       => 'object',
             'properties' => [
                 'appointment_id' => [
-                    'type'        => 'integer',
+                    'type'        => 'string',
                     'description' => 'رقم الموعد المراد إلغاؤه (من find_appointment)',
                 ],
             ],
