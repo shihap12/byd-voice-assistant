@@ -214,6 +214,12 @@ final class AdminController
         if (empty($filters)) {
             $cached = $this->redis->get($cacheKey);
             if ($cached !== null) {
+                $cached = array_map(function ($appt) {
+                    if (isset($appt['id'])) {
+                        $appt['id'] = (string) $appt['id'];
+                    }
+                    return $appt;
+                }, $cached);
                 echo json_encode(['success' => true, 'appointments' => $cached], JSON_UNESCAPED_UNICODE);
                 return;
             }
@@ -221,6 +227,13 @@ final class AdminController
 
         $appointmentModel = new \BYD\Models\AppointmentModel();
         $appointments = $appointmentModel->getAll($filters);
+
+        $appointments = array_map(function ($appt) {
+            if (isset($appt['id'])) {
+                $appt['id'] = (string) $appt['id'];
+            }
+            return $appt;
+        }, $appointments);
 
         if (empty($filters)) {
             $this->redis->set($cacheKey, $appointments, 31536000);

@@ -718,8 +718,17 @@ private function normalizePhone(string $phone): ?string
 
     $digitsOnly = preg_replace('/\D+/', '', $phone);
 
-    if ($digitsOnly === '' ) {
+    if ($digitsOnly === '') {
         return null;
+    }
+
+    // تحويل الصيغة الدولية (مثلاً 972594314588) إلى صيغة محلية (0594314588)
+    if (str_starts_with($digitsOnly, '9725') && strlen($digitsOnly) === 12) {
+        $digitsOnly = '0' . substr($digitsOnly, 3);
+    }
+    // تحويل الصيغة المكونة من 9 خانات وتبدأ بـ 5 إلى صيغة محلية تبدأ بـ 05
+    elseif (str_starts_with($digitsOnly, '5') && strlen($digitsOnly) === 9) {
+        $digitsOnly = '0' . $digitsOnly;
     }
 
     if (!str_starts_with($digitsOnly, '05') || strlen($digitsOnly) !== 10) {
@@ -1037,7 +1046,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
         'success'     => true,
         'status'      => 'booked',
         'appointment' => [
-            'id'   => $id,
+            'id'   => (string) $id,
             'date' => $date,
             'time' => $time,
         ],
@@ -1073,7 +1082,7 @@ private function findAppointment(array $params): array
                 'success'     => true,
                 'found'       => true,
                 'appointment' => [
-                    'id'   => $appt['id'],
+                    'id'   => (string) $appt['id'],
                     'date' => $appt['appointment_date'],
                     'time' => substr($appt['appointment_time'], 0, 5),
                     'name' => $appt['customer_name'],
@@ -1094,7 +1103,7 @@ private function findAppointment(array $params): array
         'success'     => true,
         'found'       => true,
         'appointment' => [
-            'id'   => $appt['id'],
+            'id'   => (string) $appt['id'],
             'date' => $appt['appointment_date'],
             'time' => substr($appt['appointment_time'], 0, 5),
             'name' => $appt['customer_name'],
@@ -1181,7 +1190,7 @@ private function rescheduleAppointment(array $params, string $callId): array
         'success'     => true,
         'status'      => 'rescheduled',
         'appointment' => [
-            'id'   => $apptId,
+            'id'   => (string) $apptId,
             'date' => $newDate,
             'time' => $newTime,
         ],
@@ -1218,7 +1227,7 @@ private function cancelAppointment(array $params, string $callId): array
         'success' => true,
         'status'  => 'cancelled',
         'cancelled_appointment' => [
-            'id'   => $apptId,
+            'id'   => (string) $apptId,
             'date' => $appt['appointment_date'],
             'time' => substr($appt['appointment_time'], 0, 5),
         ],
