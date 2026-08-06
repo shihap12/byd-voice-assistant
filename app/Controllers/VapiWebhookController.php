@@ -794,10 +794,39 @@ private function saveCustomerFeedback(array $params, string $callId, array &$con
  *
  * ما بتحجز أي إشي — فقط فحص + اقتراح. الحجز الفعلي بيصير عبر bookAppointment().
  */
+private function normalizeAppointmentTime(string $time): string
+{
+    $time = trim($time);
+    if ($time === '') {
+        return '';
+    }
+
+    if (preg_match('/^(\d{1,2}):(\d{2})$/', $time, $m)) {
+        $h   = (int) $m[1];
+        $min = (int) $m[2];
+        // تحويل أوقات المساء من صيغة 12 ساعة (1 حتى 5) إلى صيغة 24 ساعة (13 حتى 17)
+        if ($h >= 1 && $h <= 5) {
+            $h += 12;
+        }
+        return sprintf('%02d:%02d', $h, $min);
+    }
+
+    return $time;
+}
+
+/**
+ * check_appointment_availability
+ *
+ * يتحقق إن كان تاريخ/وقت معين متاح للحجز. لو مش متاح (مشغول، خارج الدوام،
+ * يوم جمعة، أو بره نطاق الأيام المسموحة)، بترجع أقرب موعد بديل متاح
+ * عبر AppointmentModel::findNearestAvailableSlot().
+ *
+ * ما بتحجز أي إشي — فقط فحص + اقتراح. الحجز الفعلي بيصير عبر bookAppointment().
+ */
 private function checkAppointmentAvailability(array $params): array
 {
     $date = trim((string) ($params['preferred_date'] ?? ''));
-    $time = trim((string) ($params['preferred_time'] ?? ''));
+    $time = $this->normalizeAppointmentTime((string) ($params['preferred_time'] ?? ''));
 
     if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         return ['success' => false, 'error' => 'INVALID_DATE'];
@@ -828,7 +857,7 @@ private function checkAppointmentAvailability(array $params): array
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
-            'free_slots' => array_slice($freeSlots, 0, 6),
+            'free_slots' => array_slice($freeSlots, 0, 20),
             'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
         ];
     }
@@ -856,7 +885,7 @@ private function checkAppointmentAvailability(array $params): array
                 'success'       => false,
                 'error'         => 'OUTSIDE_WORKING_HOURS',
                 'working_hours' => $hours,
-                'free_slots'    => array_slice($freeSlots, 0, 6),
+                'free_slots'    => array_slice($freeSlots, 0, 20),
                 'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($date, $time),
             ];
         }
@@ -867,14 +896,14 @@ private function checkAppointmentAvailability(array $params): array
                 'available'  => true,
                 'date'       => $date,
                 'time'       => $time,
-                'free_slots' => array_slice($freeSlots, 0, 6),
+                'free_slots' => array_slice($freeSlots, 0, 20),
             ];
         }
 
         return [
             'success'    => true,
             'available'  => false,
-            'free_slots' => array_slice($freeSlots, 0, 6),
+            'free_slots' => array_slice($freeSlots, 0, 20),
             'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
         ];
     }
@@ -883,7 +912,7 @@ private function checkAppointmentAvailability(array $params): array
     return [
         'success'    => true,
         'available'  => !empty($freeSlots),
-        'free_slots' => array_slice($freeSlots, 0, 6),
+        'free_slots' => array_slice($freeSlots, 0, 20),
         'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date),
     ];
 }
@@ -901,7 +930,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
     $rawName  = trim((string) ($params['customer_name'] ?? ''));
     $rawPhone = trim((string) ($params['phone_number'] ?? ''));
     $date     = trim((string) ($params['appointment_date'] ?? ''));
-    $time     = trim((string) ($params['appointment_time'] ?? ''));
+    $time     = $this->normalizeAppointmentTime((string) ($params['appointment_time'] ?? ''));
 
     if (!$this->isValidCustomerName($rawName)) {
         error_log("[VapiWebhook] [book_appointment] callId={$callId}, INVALID_NAME raw='{$rawName}'");
@@ -1051,7 +1080,7 @@ private function rescheduleAppointment(array $params, string $callId): array
 {
     $apptId  = (int) ($params['appointment_id'] ?? 0);
     $newDate = trim((string) ($params['new_date'] ?? ''));
-    $newTime = trim((string) ($params['new_time'] ?? ''));
+    $newTime = $this->normalizeAppointmentTime((string) ($params['new_time'] ?? ''));
 
     if ($apptId <= 0) {
         return ['success' => false, 'error' => 'MISSING_APPOINTMENT_ID'];
