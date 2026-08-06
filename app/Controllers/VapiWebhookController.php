@@ -808,10 +808,24 @@ private function checkAppointmentAvailability(array $params): array
     $nowTime = date('H:i');
     $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
 
+    // جلب كل المواعيد المتاحة لليوم المذكور لتضمينها في الرد
+    $freeSlots = $this->appointmentModel->getFreeSlotsForDate($date);
+    if ($date === $today) {
+        $nowMin = ((int) date('H')) * 60 + ((int) date('i'));
+        $freeSlots = array_values(array_filter(
+            $freeSlots,
+            function (string $t) use ($nowMin) {
+                [$h, $m] = explode(':', substr($t, 0, 5));
+                return (((int) $h) * 60 + (int) $m) > $nowMin;
+            }
+        ));
+    }
+
     if ($date === $today && $time !== '' && $time <= $nowTime) {
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
+            'free_slots' => array_slice($freeSlots, 0, 6),
             'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
         ];
     }
@@ -839,25 +853,34 @@ private function checkAppointmentAvailability(array $params): array
                 'success'       => false,
                 'error'         => 'OUTSIDE_WORKING_HOURS',
                 'working_hours' => $hours,
+                'free_slots'    => array_slice($freeSlots, 0, 6),
                 'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($date, $time),
             ];
         }
 
         if ($this->appointmentModel->isSlotFree($date, $time, $hours['slot_minutes'])) {
-            return ['success' => true, 'available' => true, 'date' => $date, 'time' => $time];
+            return [
+                'success'    => true,
+                'available'  => true,
+                'date'       => $date,
+                'time'       => $time,
+                'free_slots' => array_slice($freeSlots, 0, 6),
+            ];
         }
 
         return [
             'success'    => true,
             'available'  => false,
+            'free_slots' => array_slice($freeSlots, 0, 6),
             'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
         ];
     }
 
-    // ما انذكر وقت محدد — رجعي أقرب سلوت فاضي بنفس اليوم أو اللي بعده
+    // ما انذكر وقت محدد — رجعي المواعيد الفاضية واقتراح لأقرب موعد
     return [
         'success'    => true,
-        'available'  => false,
+        'available'  => !empty($freeSlots),
+        'free_slots' => array_slice($freeSlots, 0, 6),
         'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date),
     ];
 }

@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+// Set default timezone globally to Palestine (Asia/Hebron)
+date_default_timezone_set('Asia/Hebron');
+
 /**
  * Global helper functions for BYD Voice Assistant
  */

@@ -37,6 +37,11 @@ final class Database
 
         $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset={$charset}";
 
+        $caPath = '/etc/ssl/certs/ca-certificates.crt';
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            $caPath = dirname(__DIR__, 2) . '/cacert.pem';
+        }
+
         $options = [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -44,8 +49,7 @@ final class Database
             PDO::ATTR_PERSISTENT         => false,
             PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$charset}_unicode_ci",
             PDO::ATTR_TIMEOUT            => 5,
-            // TiDB Cloud بيرفض أي اتصال بدون TLS
-            PDO::MYSQL_ATTR_SSL_CA                 => '/etc/ssl/certs/ca-certificates.crt',
+            PDO::MYSQL_ATTR_SSL_CA                 => $caPath,
             PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
         ];
 
