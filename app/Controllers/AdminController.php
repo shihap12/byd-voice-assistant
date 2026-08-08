@@ -1091,20 +1091,6 @@ final class AdminController
      * Public endpoint — returns only non-sensitive settings (bot name)
      * No authentication required
      */
-    public function apiGetPublicSettings(): void
-    {
-        header('Content-Type: application/json');
-
-        $settings = self::loadSettings($this->redis);
-
-        echo json_encode([
-            'success'  => true,
-            'settings' => [
-                'bot_name'    => $settings['bot_name'] ?? 'ميرا',
-                'bot_name_en' => $settings['bot_name_en'] ?? 'Mira',
-            ],
-        ]);
-    }
 
     public function apiGetPublicCars(): void
     {
