@@ -1106,6 +1106,60 @@ final class AdminController
         ]);
     }
 
+    public function apiGetPublicCars(): void
+    {
+        header('Content-Type: application/json');
+
+        $cacheKey = 'cache:public:cars';
+        $cached = $this->redis->get($cacheKey);
+        if ($cached !== null) {
+            echo json_encode(['cars' => $cached]);
+            return;
+        }
+
+        $carModel = new \BYD\Models\CarModel();
+        $cars = $carModel->getAllModels();
+
+        $cars = array_values(array_filter($cars, function ($c) {
+            return !isset($c['is_active']) || (int) $c['is_active'] === 1;
+        }));
+
+        $this->redis->set($cacheKey, $cars, 3600);
+
+        echo json_encode(['cars' => $cars]);
+    }
+
+    public function apiGetPublicCarDetail(string $id): void
+    {
+        header('Content-Type: application/json');
+
+        $carModel = new \BYD\Models\CarModel();
+        $car = $carModel->getCarFullData((int) $id);
+
+        if (empty($car) || (isset($car['is_active']) && (int) $car['is_active'] !== 1)) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'Car not found']);
+            return;
+        }
+
+        echo json_encode(['success' => true, 'car' => $car]);
+    }
+
+
+    public function apiGetPublicSettings(): void
+{
+    header('Content-Type: application/json; charset=utf-8');
+
+    $settings = self::loadSettings($this->redis);
+
+    echo json_encode([
+        'success'  => true,
+        'settings' => [
+            'bot_name'    => $settings['bot_name'] ?? 'ميرا',
+            'bot_name_en' => $settings['bot_name_en'] ?? 'Mira',
+        ],
+    ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+}
     /**
      * Static helper — loads settings from Redis cache or DB
      * Used by AdminController and VapiWebhookController

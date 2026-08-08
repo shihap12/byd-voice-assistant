@@ -117,12 +117,14 @@ final class ChatController
         $toolsPayload = $this->tools->getGeminiToolDeclarations();
 
         $contents = [];
-        foreach ($history as $h) {
-            $contents[] = [
-                'role'  => $h['role'],
-                'parts' => $h['parts'] ?? [['text' => $h['text'] ?? '']],
-            ];
-        }
+// بعد
+foreach ($history as $h) {
+    $parts = $h['parts'] ?? [['text' => $h['text'] ?? '']];
+    $contents[] = [
+        'role'  => $h['role'],
+        'parts' => $this->normalizeGeminiParts($parts),
+    ];
+}
         $userParts = [['text' => $message]];
         $contents[] = ['role' => 'user', 'parts' => $userParts];
 
@@ -338,5 +340,25 @@ final class ChatController
         'car_model'  => $latestImages['model_name'] ?? null,
     ], JSON_UNESCAPED_UNICODE);
 }
+
+private function normalizeGeminiParts(array $parts): array
+    {
+        foreach ($parts as &$part) {
+            if (isset($part['functionCall'])) {
+                $args = $part['functionCall']['args'] ?? [];
+                if (empty($args)) {
+                    $part['functionCall']['args'] = new \stdClass();
+                }
+            }
+            if (isset($part['functionResponse'])) {
+                $resp = $part['functionResponse']['response'] ?? [];
+                if (empty($resp)) {
+                    $part['functionResponse']['response'] = new \stdClass();
+                }
+            }
+        }
+        unset($part);
+        return $parts;
+    }
 
 }

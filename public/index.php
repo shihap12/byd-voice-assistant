@@ -186,6 +186,14 @@ $router->add('GET', '/api/cars', function (): void {
     (new AdminController())->apiGetCars();
 });
 
+$router->add('GET', '/api/public/cars', function (): void {
+    (new AdminController())->apiGetPublicCars();
+});
+
+$router->add('GET', '/api/public/cars/{id}', function (string $id): void {
+    (new AdminController())->apiGetPublicCarDetail($id);
+});
+
 $router->add('GET', '/api/cars/{id}', function (string $id): void {
     (new AdminController())->apiGetCar($id);
 });

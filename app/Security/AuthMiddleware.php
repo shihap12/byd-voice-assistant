@@ -24,6 +24,7 @@ final class AuthMiddleware
         '/api/upload/pdf',
         'api/chat/webhook',
         '/api/cars',
+        '/api/public/cars',
         '/api/car-images',
         '/api/settings/public',
         '/api/whatsapp/webhook',
@@ -164,7 +165,7 @@ final class AuthMiddleware
 
     // Car API routes are admin-only — AdminController handles its own auth.
     // Use str_starts_with because paths like /api/cars/44/images won't match with str_ends_with.
-    if (str_starts_with($path, '/api/cars') || str_starts_with($path, '/api/car-images')) {
+    if (str_starts_with($path, '/api/cars') || str_starts_with($path, '/api/car-images') || str_starts_with($path, '/api/public/cars')) {
         return true;
     }
 
