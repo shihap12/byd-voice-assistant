@@ -96,11 +96,11 @@ final class ArabicPronunciationService
 
         if ($hundreds > 0) {
             if ($hundreds === 1) {
-                $parts[] = 'مية';
+                $parts[] = 'ميه';
             } elseif ($hundreds === 2) {
-                $parts[] = 'ميتين';
+                $parts[] = 'متين';
             } else {
-                $parts[] = self::CONSTRUCT[$hundreds] . ' مية';
+                $parts[] = self::CONSTRUCT[$hundreds] . ' ميه';
             }
         }
 
