@@ -196,25 +196,25 @@ final class ArabicPronunciationService
         $hourWords = self::numberToWords($hour12, false);
 
         if ($minute === 0) {
-            return "الساعة {$hourWords} {$period}";
+            return "الساعه {$hourWords} {$period}";
         }
 
         if ($minute === 30) {
-            return "الساعة {$hourWords} ونص {$period}";
+            return "الساعه {$hourWords} ونص {$period}";
         }
 
         if ($minute === 15) {
-            return "الساعة {$hourWords} وربع {$period}";
+            return "الساعه {$hourWords} وربع {$period}";
         }
 
         if ($minute === 45) {
             $nextHour = $hour12 === 12 ? 1 : $hour12 + 1;
             $nextHourWords = self::numberToWords($nextHour, false);
-            return "الساعة {$nextHourWords} إلا ربع {$period}";
+            return "الساعه {$nextHourWords} إلا ربع {$period}";
         }
 
         $minuteWords = self::numberToWords($minute, false);
-        return "الساعة {$hourWords} و{$minuteWords} دقيقة {$period}";
+        return "الساعه {$hourWords} و{$minuteWords} دقيقة {$period}";
     }
 
     /**
