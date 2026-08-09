@@ -190,7 +190,7 @@ final class ArabicPronunciationService
             $period = 'بعد الظهر';
         } else {
             $hour12 = $hour24 - 12;
-            $period = 'المسا';
+            $period = 'المسه';
         }
 
         $hourWords = self::numberToWords($hour12, false);
