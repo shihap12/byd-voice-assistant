@@ -275,7 +275,6 @@ final class VapiWebhookController
         $this->redis->setContext($callId, $context, 1800);
 
         $type = $message['type'] ?? '';
-        error_log("[TIMING] TOTAL webhook request=" . round((microtime(true)-$__t0)*1000) . "ms");
         if ($type === 'function-call') {
             $this->jsonResponse(['result' => $results[0]['result'] ?? '']);
         } else {
