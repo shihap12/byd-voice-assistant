@@ -40,6 +40,60 @@ final class GreenApiService
 
         return $this->post($url, $payload);
     }
+    /**
+     * فحص إذا رقم معين (بصيغة دولية بدون +) مسجل فعلياً على واتساب.
+     */
+    public function checkWhatsapp(string $internationalPhone): bool
+    {
+        if (!$this->isConfigured()) {
+            return false;
+        }
+
+        $url = "{$this->apiUrl}/waInstance{$this->idInstance}/checkWhatsapp/{$this->apiTokenInstance}";
+        $payload = json_encode(['phoneNumber' => $internationalPhone], JSON_UNESCAPED_UNICODE);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT        => 15,
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        error_log("[GreenApiService] checkWhatsapp phone={$internationalPhone} httpCode={$httpCode} response=" . substr((string) $response, 0, 300));
+
+        if ($httpCode < 200 || $httpCode >= 300 || $response === false) {
+            return false;
+        }
+
+        $data = json_decode($response, true);
+        return (bool) ($data['existsWhatsapp'] ?? false);
+    }
+
+    /**
+     * يحول رقم محلي فلسطيني (05XXXXXXXX) إلى chatId صحيح لواتساب،
+     * بتجربة بادئة 972 ثم 970 (الأرقام الفلسطينية ممكن تكون مسجلة
+     * على واتساب تحت أي منهم حسب الشركة/الشبكة).
+     * بيرجع null إذا الرقم مش موجود على واتساب بأي من الصيغتين.
+     */
+    public function resolveChatId(string $localPhone): ?string
+    {
+        $digitsOnly = preg_replace('/\D/', '', $localPhone);
+        $withoutLeadingZero = preg_replace('/^0/', '', $digitsOnly);
+
+        foreach (['972', '970'] as $countryCode) {
+            $candidate = $countryCode . $withoutLeadingZero;
+            if ($this->checkWhatsapp($candidate)) {
+                return $candidate . '@c.us';
+            }
+        }
+
+        return null;
+    }
 
     /**
      * إرسال ملف (صورة) عبر رابط عام (URL)
