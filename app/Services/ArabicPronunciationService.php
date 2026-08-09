@@ -181,13 +181,13 @@ final class ArabicPronunciationService
             $period = 'نص الليل';
         } elseif ($hour24 < 12) {
             $hour12 = $hour24;
-            $period = $hour24 < 6 ? 'الصبح' : 'الصبح';
+            $period = $hour24 < 6 ? 'الصُبِح' : 'الصُبِح';
         } elseif ($hour24 === 12) {
             $hour12 = 12;
-            $period = 'الظهر';
+            $period = 'الظُهُر';
         } elseif ($hour24 < 17) {
             $hour12 = $hour24 - 12;
-            $period = 'بعد الظهر';
+            $period = 'بعد الظُهُر';
         } else {
             $hour12 = $hour24 - 12;
             $period = 'المسه';
