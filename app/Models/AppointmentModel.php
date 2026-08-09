@@ -224,6 +224,22 @@ final class AppointmentModel
         return $this->db->query($sql, $params);
     }
 
+    public function autoMarkMissed(): int
+{
+    return $this->db->execute(
+        "UPDATE appointments
+         SET status = 'missed'
+         WHERE status = 'scheduled'
+           AND (
+                appointment_date < CURDATE()
+                OR (
+                    appointment_date = CURDATE()
+                    AND ADDTIME(appointment_time, SEC_TO_TIME(duration_minutes * 60)) < CURTIME()
+                )
+           )"
+    );
+}
+
     public function findById(int $id): array|false
     {
         return $this->db->queryOne('SELECT * FROM appointments WHERE id = ?', [$id]);
@@ -292,7 +308,7 @@ final class AppointmentModel
 
     public function updateStatus(int $id, string $status): bool
     {
-        $allowed = ['scheduled', 'cancelled', 'completed'];
+        $allowed = ['scheduled', 'cancelled', 'completed', 'missed'];
         if (!in_array($status, $allowed, true)) {
             return false;
         }

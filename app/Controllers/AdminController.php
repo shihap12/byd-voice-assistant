@@ -183,25 +183,33 @@ final class AdminController
      * قائمة كل المواعيد مع فلاتر اختيارية عبر query string:
      * ?status=scheduled|cancelled|completed  &from=YYYY-MM-DD  &to=YYYY-MM-DD
      */
-    public function apiGetAppointments(): void
-    {
-        $this->startSession();
-        if ($this->getAuthenticatedAdmin() === null) {
-            http_response_code(401);
-            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-            return;
-        }
+public function apiGetAppointments(): void
+{
+    $this->startSession();
+    if ($this->getAuthenticatedAdmin() === null) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        return;
+    }
 
-        header('Content-Type: application/json');
+    header('Content-Type: application/json');
 
-        $status = trim((string) ($_GET['status'] ?? ''));
-        $from   = trim((string) ($_GET['from'] ?? ''));
-        $to     = trim((string) ($_GET['to'] ?? ''));
+    $appointmentModel = new \BYD\Models\AppointmentModel();
 
-        $filters = [];
-        if ($status !== '' && in_array($status, ['scheduled', 'cancelled', 'completed'], true)) {
-            $filters['status'] = $status;
-        }
+    // تحويل أي موعد فات وقته من scheduled → missed قبل ما نرجع القائمة
+    $missedCount = $appointmentModel->autoMarkMissed();
+    if ($missedCount > 0) {
+        $this->redis->delete('cache:admin:appointments');
+    }
+
+    $status = trim((string) ($_GET['status'] ?? ''));
+    $from   = trim((string) ($_GET['from'] ?? ''));
+    $to     = trim((string) ($_GET['to'] ?? ''));
+
+    $filters = [];
+    if ($status !== '' && in_array($status, ['scheduled', 'cancelled', 'completed', 'missed'], true)) {
+        $filters['status'] = $status;
+    }
         if ($from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
             $filters['from'] = $from;
         }
@@ -225,7 +233,6 @@ final class AdminController
             }
         }
 
-        $appointmentModel = new \BYD\Models\AppointmentModel();
         $appointments = $appointmentModel->getAll($filters);
 
         $appointments = array_map(function ($appt) {
@@ -268,7 +275,7 @@ final class AdminController
         }
 
         $status = trim((string) ($body['status'] ?? ''));
-        if (!in_array($status, ['scheduled', 'cancelled', 'completed'], true)) {
+        if (!in_array($status, ['scheduled', 'cancelled', 'completed', 'missed'], true)) {
             http_response_code(422);
             echo json_encode(['success' => false, 'message' => 'حالة غير صالحة.']);
             return;
@@ -313,7 +320,7 @@ final class AdminController
             return;
         }
 
-        $allowedStatuses = ['scheduled', 'cancelled', 'completed'];
+        $allowedStatuses = ['scheduled', 'cancelled', 'completed', 'missed'];
         $data = [];
 
         if (!empty($body['appointment_date'])) $data['appointment_date'] = $body['appointment_date'];
