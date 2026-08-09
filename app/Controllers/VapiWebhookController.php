@@ -33,6 +33,8 @@ final class VapiWebhookController
 
     public function handle(): void
     {
+                $__t0 = microtime(true);
+
         $rawBody   = file_get_contents('php://input');
         $signature = $_SERVER['HTTP_X_VAPI_SECRET'] ?? '';
 
@@ -273,6 +275,7 @@ final class VapiWebhookController
         $this->redis->setContext($callId, $context, 1800);
 
         $type = $message['type'] ?? '';
+        error_log("[TIMING] TOTAL webhook request=" . round((microtime(true)-$__t0)*1000) . "ms");
         if ($type === 'function-call') {
             $this->jsonResponse(['result' => $results[0]['result'] ?? '']);
         } else {
@@ -965,7 +968,8 @@ private function checkAppointmentAvailability(array $params): array
  * بين الفحص والتأكيد)، وبتتحقق من الاسم ورقم الجوال بنفس منطق الملاحظات.
  */
 private function bookAppointment(array $params, string $callId, array &$context): array
-{
+{        $__tb0 = microtime(true);
+
     $rawName  = trim((string) ($params['customer_name'] ?? ''));
     $rawPhone = trim((string) ($params['phone_number'] ?? ''));
     $date     = trim((string) ($params['appointment_date'] ?? ''));
@@ -987,6 +991,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
     }
 
     $hours   = $this->appointmentModel->getWorkingHours();
+    error_log("[TIMING] getWorkingHours=" . round((microtime(true)-$__tb0)*1000) . "ms");
     $today   = date('Y-m-d');
     $nowTime = date('H:i');
     $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
@@ -1016,7 +1021,10 @@ private function bookAppointment(array $params, string $callId, array &$context)
     }
 
     // فحص أخير لحظة الحجز — منعاً لتعارض لحظي بين الفحص والتأكيد
-    if (!$this->appointmentModel->isSlotFree($date, $time, $hours['slot_minutes'])) {
+    $__tb1 = microtime(true);
+    $isFree = $this->appointmentModel->isSlotFree($date, $time, $hours['slot_minutes']);
+    error_log("[TIMING] isSlotFree=" . round((microtime(true)-$__tb1)*1000) . "ms");
+    if (!$isFree) {
         return [
             'success'    => false,
             'error'      => 'SLOT_TAKEN',
@@ -1026,6 +1034,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
 
     $cleanName = preg_replace('/\s+/u', ' ', $rawName);
 
+    $__tb2 = microtime(true);
     $id = $this->appointmentModel->create([
         'customer_name'    => $cleanName,
         'phone_number'     => $normalizedPhone,
@@ -1035,6 +1044,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
         'source'           => $this->channel,
         'session_id'       => $callId,
     ]);
+    error_log("[TIMING] create=" . round((microtime(true)-$__tb2)*1000) . "ms | TOTAL bookAppointment=" . round((microtime(true)-$__tb0)*1000) . "ms");
 
     \BYD\Models\RedisClient::getInstance()->delete('cache:admin:appointments');
 
