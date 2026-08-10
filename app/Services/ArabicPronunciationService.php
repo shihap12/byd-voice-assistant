@@ -167,7 +167,8 @@ public static function dateToWords(string $ymd): string
     $dayWords   = self::numberToWords($day, false);
     $monthWords = self::numberToWords($month, false);
 
-    return "يوم {$dayName}، {$dayWords} {$monthWords}";
+    return "يوم {$dayName}، {$dayWords}، {$monthWords}،";
+
 }
 
     /**
