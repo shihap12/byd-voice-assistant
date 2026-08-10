@@ -137,30 +137,33 @@ final class Security
     /**
      * Validate a Vapi webhook signature
      */
-    public static function validateVapiSignature(string $rawBody, string $signature): bool
-    {
-        $secret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? '';
-        $env    = $_ENV['APP_ENV'] ?? 'production';
+public static function validateVapiSignature(string $rawBody, string $signature): bool
+{
+    $secret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? '';
+    $env    = $_ENV['APP_ENV'] ?? 'production';
 
-        if (empty($secret)) {
-            error_log('[Security] VAPI_WEBHOOK_SECRET غير موجود في .env');
-            // If we are in dev mode, we can bypass
-            if ($env === 'development') return true;
-            return false;
-        }
+    // ─── DEBUG مؤقت — رح نحذفه بعد ما نحل المشكلة ───────────────
+    error_log('[DEBUG] secret_len=' . strlen($secret) . ' secret_val=' . var_export($secret, true));
+    error_log('[DEBUG] signature_len=' . strlen($signature) . ' signature_val=' . var_export($signature, true));
+    // ──────────────────────────────────────────────────────────
 
-        if (hash_equals($secret, $signature)) {
-            return true;
-        }
-
-        // Bypass for development mode if signature doesn't match
-        if ($env === 'development') {
-            error_log('[Security] Bypassing VAPI signature mismatch in development mode.');
-            return true;
-        }
-
+    if (empty($secret)) {
+        error_log('[Security] VAPI_WEBHOOK_SECRET غير موجود في .env');
+        if ($env === 'development') return true;
         return false;
     }
+
+    if (hash_equals($secret, $signature)) {
+        return true;
+    }
+
+    if ($env === 'development') {
+        error_log('[Security] Bypassing VAPI signature mismatch in development mode.');
+        return true;
+    }
+
+    return false;
+}
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
