@@ -31,11 +31,26 @@ final class ArabicPronunciationService
         14 => 'اربعتاش', 15 => 'خمستاش', 16 => 'ستاش', 17 => 'سبعتاش',
         18 => 'تمنتاش', 19 => 'تسعتاش',
     ];
+    
+    
 
     private const TENS = [
         20 => 'عشرين', 30 => 'تلاتين', 40 => 'اربعين', 50 => 'خمسين',
         60 => 'ستين', 70 => 'سبعين', 80 => 'تمانين', 90 => 'تسعين',
     ];
+    
+    private const HOUR_WORDS = [
+    1 => 'واحد', 2 => 'تنتين', 3 => 'تلاته', 4 => 'اربعه',
+    5 => 'خمسه', 6 => 'سته', 7 => 'سبعه', 8 => 'تمنيه',
+    9 => 'تسعه', 10 => 'عشره', 11 => 'حداش', 12 => 'اتناش',
+    ];
+
+    private const WEEKDAYS_AR = [
+    'Sunday' => 'الأحد', 'Monday' => 'الاثنين', 'Tuesday' => 'الثلاثاء',
+    'Wednesday' => 'الأربعاء', 'Thursday' => 'الخميس',
+    'Friday' => 'الجمعة', 'Saturday' => 'السبت',
+    ];
+    
 
     /**
      * يحول رقم (صحيح أو عشري) لنص عربي فلسطيني منطوق بالكامل.
@@ -138,85 +153,76 @@ final class ArabicPronunciationService
      * يحول تاريخ YYYY-MM-DD لنص منطوق: يوم + شهر (كرقم، بدون اسم شهر) + سنة.
      * مطابق لقاعدة "### التواريخ (نطق)" بالبرومبت.
      */
-    public static function dateToWords(string $ymd): string
-    {
-        $ts = strtotime($ymd);
-        if ($ts === false) {
-            return $ymd; // احتياطي — ما لازم يصير
-        }
-
-        $day   = (int) date('j', $ts);
-        $month = (int) date('n', $ts);
-        $year  = (int) date('Y', $ts);
-
-        $dayWords   = self::numberToWords($day, false);
-        $monthWords = self::numberToWords($month, false);
-
-        // السنة: "الفين و[الباقي]" لـ 2000-2099
-        if ($year >= 2000 && $year < 2100) {
-            $rest = $year - 2000;
-            $yearWords = $rest === 0 ? 'الفين' : 'الفين و' . self::numberToWords($rest, false);
-        } else {
-            $yearWords = self::numberToWords($year, false);
-        }
-
-        return "{$dayWords} {$monthWords} {$yearWords}";
+public static function dateToWords(string $ymd): string
+{
+    $ts = strtotime($ymd);
+    if ($ts === false) {
+        return $ymd;
     }
+
+    $dayName = self::WEEKDAYS_AR[date('l', $ts)] ?? '';
+    $day     = (int) date('j', $ts);
+    $month   = (int) date('n', $ts);
+
+    $dayWords   = self::numberToWords($day, false);
+    $monthWords = self::numberToWords($month, false);
+
+    return "يوم {$dayName}، {$dayWords} {$monthWords}";
+}
 
     /**
      * يحول وقت HH:MM (24 ساعة) لصيغة 12 ساعة منطوقة مع تحديد الفترة.
      * مطابق لقاعدة "### الأوقات (نطق)" بالبرومبت.
      */
-    public static function timeToWords(string $hm): string
-    {
-        if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim($hm), $m)) {
-            return $hm; // احتياطي
-        }
-
-        $hour24 = (int) $m[1];
-        $minute = (int) $m[2];
-
-        if ($hour24 === 0) {
-            $hour12 = 12;
-            $period = 'نص الليل';
-        } elseif ($hour24 < 12) {
-            $hour12 = $hour24;
-            $period = $hour24 < 6 ? 'الصُبِح' : 'الصُبِح';
-        } elseif ($hour24 === 12) {
-            $hour12 = 12;
-            $period = 'الظُهُر';
-        } elseif ($hour24 < 17) {
-            $hour12 = $hour24 - 12;
-            $period = 'بعد الظُهُر';
-        } else {
-            $hour12 = $hour24 - 12;
-            $period = 'المسه';
-        }
-
-        $hourWords = self::numberToWords($hour12, false);
-
-        if ($minute === 0) {
-            return "الساعه {$hourWords} {$period}";
-        }
-
-        if ($minute === 30) {
-            return "الساعه {$hourWords} ونص {$period}";
-        }
-
-        if ($minute === 15) {
-            return "الساعه {$hourWords} وربع {$period}";
-        }
-
-        if ($minute === 45) {
-            $nextHour = $hour12 === 12 ? 1 : $hour12 + 1;
-            $nextHourWords = self::numberToWords($nextHour, false);
-            return "الساعه {$nextHourWords} إلا ربع {$period}";
-        }
-
-        $minuteWords = self::numberToWords($minute, false);
-        return "الساعه {$hourWords} و{$minuteWords} دقيقة {$period}";
+   public static function timeToWords(string $hm): string
+{
+    if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim($hm), $m)) {
+        return $hm;
     }
 
+    $hour24 = (int) $m[1];
+    $minute = (int) $m[2];
+
+    if ($hour24 === 0) {
+        $hour12 = 12;
+        $period = 'نص الليل';
+    } elseif ($hour24 < 12) {
+        $hour12 = $hour24;
+        $period = 'الصُبِح';
+    } elseif ($hour24 === 12) {
+        $hour12 = 12;
+        $period = 'الظُهُر';
+    } elseif ($hour24 < 17) {
+        $hour12 = $hour24 - 12;
+        $period = 'بعد الظُهُر';
+    } else {
+        $hour12 = $hour24 - 12;
+        $period = 'المسه';
+    }
+
+    $hourWords = self::HOUR_WORDS[$hour12] ?? self::numberToWords($hour12, false);
+
+    if ($minute === 0) {
+        return "الساعه {$hourWords}، {$period}";
+    }
+
+    if ($minute === 30) {
+        return "الساعه {$hourWords} ونص، {$period}";
+    }
+
+    if ($minute === 15) {
+        return "الساعه {$hourWords} وربع، {$period}";
+    }
+
+    if ($minute === 45) {
+        $nextHour = $hour12 === 12 ? 1 : $hour12 + 1;
+        $nextHourWords = self::HOUR_WORDS[$nextHour] ?? self::numberToWords($nextHour, false);
+        return "الساعه {$nextHourWords} إلا ربع، {$period}";
+    }
+
+    $minuteWords = self::numberToWords($minute, false);
+    return "الساعه {$hourWords} و{$minuteWords} دقيقة، {$period}";
+}
     /**
      * رقم الجوال — كل رقم يُقرأ منفرد، بدون صيغة إضافة أو مجموع.
      */
