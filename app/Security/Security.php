@@ -142,10 +142,7 @@ public static function validateVapiSignature(string $rawBody, string $signature)
     $secret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? '';
     $env    = $_ENV['APP_ENV'] ?? 'production';
 
-    // ─── DEBUG مؤقت — رح نحذفه بعد ما نحل المشكلة ───────────────
-    error_log('[DEBUG] secret_len=' . strlen($secret) . ' secret_val=' . var_export($secret, true));
-    error_log('[DEBUG] signature_len=' . strlen($signature) . ' signature_val=' . var_export($signature, true));
-    // ──────────────────────────────────────────────────────────
+
 
     if (empty($secret)) {
         error_log('[Security] VAPI_WEBHOOK_SECRET غير موجود في .env');
