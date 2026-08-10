@@ -116,8 +116,15 @@ $router->add('POST', '/api/upload/pdf', function (): void {
 
 $router->add('GET', '/health', function (): void {
     header('Content-Type: application/json');
+    try {
+        \BYD\Models\Database::getInstance()->query('SELECT 1');
+        $dbStatus = 'ok';
+    } catch (\Throwable $e) {
+        $dbStatus = 'error';
+    }
     echo json_encode([
         'status'  => 'ok',
+        'db'      => $dbStatus,
         'service' => 'BYD Voice Assistant',
         'time'    => date('Y-m-d H:i:s'),
     ]);
