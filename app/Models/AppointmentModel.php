@@ -80,42 +80,47 @@ final class AppointmentModel
     /**
      * فحص تعارض زمني بسيط (interval overlap) بين السلوت الجديد وأي حجز موجود بنفس اليوم.
      */
-    public function isSlotFree(string $date, string $time, int $durationMinutes = 30): bool
-    {
-        $startNew = $this->timeToMinutes($time);
-        $endNew   = $startNew + $durationMinutes;
+public function isSlotFree(string $date, string $time, int $durationMinutes = 30, ?array $bookedTimes = null): bool
+{
+    $startNew = $this->timeToMinutes($time);
+    $endNew   = $startNew + $durationMinutes;
 
-        foreach ($this->getBookedTimesForDate($date) as $booked) {
-            $s = $this->timeToMinutes((string) $booked['appointment_time']);
-            $e = $s + (int) $booked['duration_minutes'];
-            if ($startNew < $e && $endNew > $s) {
-                return false;
-            }
+    $booked = $bookedTimes ?? $this->getBookedTimesForDate($date);
+
+    foreach ($booked as $b) {
+        $s = $this->timeToMinutes((string) $b['appointment_time']);
+        $e = $s + (int) $b['duration_minutes'];
+        if ($startNew < $e && $endNew > $s) {
+            return false;
         }
-
-        return true;
     }
+
+    return true;
+}
 
     /**
      * كل السلوتات الفاضية (نص ساعة نص ساعة) ضمن دوام الفرع بتاريخ معين.
      */
-    public function getFreeSlotsForDate(string $date): array
-    {
-        $hours    = $this->getWorkingHours();
-        $slot     = max(5, $hours['slot_minutes']);
-        $startMin = $this->timeToMinutes($hours['start']);
-        $endMin   = $this->timeToMinutes($hours['end']);
+public function getFreeSlotsForDate(string $date): array
+{
+    $hours    = $this->getWorkingHours();
+    $slot     = max(5, $hours['slot_minutes']);
+    $startMin = $this->timeToMinutes($hours['start']);
+    $endMin   = $this->timeToMinutes($hours['end']);
 
-        $free = [];
-        for ($m = $startMin; $m + $slot <= $endMin; $m += $slot) {
-            $t = $this->minutesToTime($m);
-            if ($this->isSlotFree($date, $t, $slot)) {
-                $free[] = $t;
-            }
+    // جلب الحجوزات مرة وحدة بس بدل ما نجيبها من جديد لكل سلوت (كانت 16 query، صارت query وحدة)
+    $bookedTimes = $this->getBookedTimesForDate($date);
+
+    $free = [];
+    for ($m = $startMin; $m + $slot <= $endMin; $m += $slot) {
+        $t = $this->minutesToTime($m);
+        if ($this->isSlotFree($date, $t, $slot, $bookedTimes)) {
+            $free[] = $t;
         }
-
-        return $free;
     }
+
+    return $free;
+}
 
     /**
      * يدور على أقرب موعد متاح ابتداءً من تاريخ معين (أو اليوم لو التاريخ فات)،
