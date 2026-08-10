@@ -353,6 +353,97 @@ public function apiGetAppointments(): void
         echo json_encode(['success' => true]);
     }
 
+    // ─────────────────────────────────────────────────────────
+    // Specialist Contact Requests (تبويب طلبات التواصل مع مختص)
+    // ─────────────────────────────────────────────────────────
+
+    public function apiGetContactRequests(): void
+    {
+        $this->startSession();
+        if ($this->getAuthenticatedAdmin() === null) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            return;
+        }
+
+        header('Content-Type: application/json');
+
+        $status = trim((string) ($_GET['status'] ?? ''));
+        $filters = [];
+        if ($status !== '' && in_array($status, ['pending', 'contacted'], true)) {
+            $filters['status'] = $status;
+        }
+
+        $model = new \BYD\Models\ContactRequestModel();
+
+        $cacheKey = 'cache:admin:contact_requests';
+        if (empty($filters)) {
+            $cached = $this->redis->get($cacheKey);
+            if ($cached !== null) {
+                $cached = array_map(function ($r) {
+                    if (isset($r['id'])) $r['id'] = (string) $r['id'];
+                    return $r;
+                }, $cached);
+                echo json_encode(['success' => true, 'requests' => $cached], JSON_UNESCAPED_UNICODE);
+                return;
+            }
+        }
+
+        $requests = $model->getAll($filters);
+        $requests = array_map(function ($r) {
+            if (isset($r['id'])) $r['id'] = (string) $r['id'];
+            return $r;
+        }, $requests);
+
+        if (empty($filters)) {
+            $this->redis->set($cacheKey, $requests, 31536000);
+        }
+
+        echo json_encode(['success' => true, 'requests' => $requests], JSON_UNESCAPED_UNICODE);
+    }
+
+    public function apiUpdateContactRequestStatus(string $id): void
+    {
+        $this->startSession();
+        if ($this->getAuthenticatedAdmin() === null) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            return;
+        }
+
+        header('Content-Type: application/json');
+
+        $raw  = file_get_contents('php://input');
+        $body = json_decode($raw, true) ?? [];
+
+        $csrfToken = (string) ($body['csrf_token'] ?? '');
+        if (!Security::validateCsrfToken(session_id(), $csrfToken)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'رمز الحماية غير صالح أو منتهي، حاول مرة أخرى.']);
+            return;
+        }
+
+        $status = trim((string) ($body['status'] ?? ''));
+        if (!in_array($status, ['pending', 'contacted'], true)) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'message' => 'حالة غير صالحة.']);
+            return;
+        }
+
+        $model = new \BYD\Models\ContactRequestModel();
+        $updated = $model->updateStatus((int) $id, $status);
+
+        if (!$updated) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'الطلب غير موجود.']);
+            return;
+        }
+
+        $this->redis->delete('cache:admin:contact_requests');
+
+        echo json_encode(['success' => true]);
+    }
+
     public function dashboard(): void
     {
         $this->startSession();

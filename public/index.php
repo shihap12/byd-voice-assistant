@@ -189,6 +189,14 @@ $router->add('POST', '/admin/logout-api', function (): void {
     (new AdminController())->apiLogout();
 });
 
+$router->add('GET', '/admin/api/contact-requests', function (): void {
+    (new AdminController())->apiGetContactRequests();
+});
+
+$router->add('POST', '/admin/api/contact-requests/{id}', function (string $id): void {
+    (new AdminController())->apiUpdateContactRequestStatus($id);
+});
+
 $router->add('GET', '/api/cars', function (): void {
     (new AdminController())->apiGetCars();
 });

@@ -182,15 +182,16 @@ public function getFreeSlotsForDate(string $date): array
      * حجز فعلي — لا تفحص التوفر هون، الاستدعاء المسؤول (VapiWebhookController::bookAppointment)
      * لازم يكون تحقق من isSlotFree قبل ما يوصل لهون.
      */
-    public function create(array $data): int
+public function create(array $data): int
     {
         $this->db->execute(
             "INSERT INTO appointments
-                (customer_name, phone_number, appointment_date, appointment_time, duration_minutes, status, source, session_id, notes)
-             VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?, ?)",
+                (customer_name, phone_number, car_id, appointment_date, appointment_time, duration_minutes, status, source, session_id, notes)
+             VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?)",
             [
                 $data['customer_name'],
                 $data['phone_number'],
+                $data['car_id'] ?? null,
                 $data['appointment_date'],
                 $data['appointment_time'],
                 $data['duration_minutes'] ?? self::DEFAULT_SLOT_MIN,
@@ -206,25 +207,28 @@ public function getFreeSlotsForDate(string $date): array
     /**
      * قائمة المواعيد لتبويب الأدمن، مع فلاتر اختيارية.
      */
-    public function getAll(array $filters = []): array
+public function getAll(array $filters = []): array
     {
-        $sql    = 'SELECT * FROM appointments WHERE 1=1';
+        $sql    = 'SELECT a.*, c.model_name, c.model_name_ar
+                    FROM appointments a
+                    LEFT JOIN cars c ON c.id = a.car_id
+                    WHERE 1=1';
         $params = [];
 
         if (!empty($filters['status'])) {
-            $sql     .= ' AND status = ?';
+            $sql     .= ' AND a.status = ?';
             $params[] = $filters['status'];
         }
         if (!empty($filters['from'])) {
-            $sql     .= ' AND appointment_date >= ?';
+            $sql     .= ' AND a.appointment_date >= ?';
             $params[] = $filters['from'];
         }
         if (!empty($filters['to'])) {
-            $sql     .= ' AND appointment_date <= ?';
+            $sql     .= ' AND a.appointment_date <= ?';
             $params[] = $filters['to'];
         }
 
-        $sql .= ' ORDER BY appointment_date ASC, appointment_time ASC';
+        $sql .= ' ORDER BY a.appointment_date ASC, a.appointment_time ASC';
 
         return $this->db->query($sql, $params);
     }

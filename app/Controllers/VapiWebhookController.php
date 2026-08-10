@@ -9,14 +9,14 @@ use BYD\Models\CarModel;
 use BYD\Models\AppointmentModel;
 use BYD\Security\Security;
 use BYD\Services\ArabicPronunciationService;
-
+use BYD\Models\ContactRequestModel;
 
 final class VapiWebhookController
 {
     private RedisClient     $redis;
     private CarModel        $carModel;
     private AppointmentModel $appointmentModel;
-
+    private ContactRequestModel $contactRequestModel;
     /**
      * القناة اللي بتستخدم الأدوات هلق (voice / chat / whatsapp).
      * الافتراضي "voice" (Vapi). ChatController وWhatsAppController
@@ -29,6 +29,7 @@ final class VapiWebhookController
         $this->redis            = RedisClient::getInstance();
         $this->carModel         = new CarModel();
         $this->appointmentModel = new AppointmentModel();
+        $this->contactRequestModel = new ContactRequestModel();
     }
 
     public function handle(): void
@@ -606,6 +607,7 @@ PROMPT;
             'find_appointment'               => $this->findAppointment($arguments),
             'reschedule_appointment'         => $this->rescheduleAppointment($arguments, $callId),
             'cancel_appointment'             => $this->cancelAppointment($arguments, $callId),
+            'request_specialist_contact'     => $this->requestSpecialistContact($arguments, $callId, $context),
             default                  => ['error' => "دالة غير معروفة: {$functionName}"],
         };
     }
@@ -1045,6 +1047,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
     $id = $this->appointmentModel->create([
         'customer_name'    => $cleanName,
         'phone_number'     => $normalizedPhone,
+        'car_id'           => $context['last_car_id'] ?? null,
         'appointment_date' => $date,
         'appointment_time' => $time,
         'duration_minutes' => $hours['slot_minutes'],
@@ -1269,6 +1272,64 @@ private function cancelAppointment(array $params, string $callId): array
 }
 
 
+/**
+ * request_specialist_contact
+ *
+ * تسجيل طلب تواصل من أحد المختصين بخصوص سيارة معينة (بديل عن حجز زيارة فعلية).
+ * لازم اسم العميل الثلاثي ورقم جواله، بنفس منطق التحقق المستخدم بالملاحظات والمواعيد.
+ */
+private function requestSpecialistContact(array $params, string $callId, array &$context): array
+{
+    $rawName  = trim((string) ($params['customer_name'] ?? ''));
+    $rawPhone = trim((string) ($params['phone_number'] ?? ''));
+
+    if (!$this->isValidCustomerName($rawName)) {
+        error_log("[VapiWebhook] [request_specialist_contact] callId={$callId}, INVALID_NAME raw='{$rawName}'");
+        return ['success' => false, 'error' => 'INVALID_NAME'];
+    }
+
+    $normalizedPhone = $this->normalizePhone($rawPhone);
+    if ($normalizedPhone === null) {
+        error_log("[VapiWebhook] [request_specialist_contact] callId={$callId}, INVALID_PHONE raw='{$rawPhone}'");
+        return ['success' => false, 'error' => 'INVALID_PHONE'];
+    }
+
+    $cleanName = preg_replace('/\s+/u', ' ', $rawName);
+    $carId     = $context['last_car_id'] ?? null;
+
+    $id = $this->contactRequestModel->create([
+        'customer_name' => $cleanName,
+        'phone_number'  => $normalizedPhone,
+        'car_id'        => $carId,
+        'channel'       => $this->channel,
+        'session_id'    => $callId,
+    ]);
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:contact_requests');
+
+    if ($this->channel === 'whatsapp') {
+        try {
+            $db = \BYD\Models\Database::getInstance();
+            $db->execute(
+                "UPDATE customers SET name = ? WHERE phone_number = ? AND (name IS NULL OR name = '')",
+                [$cleanName, $normalizedPhone]
+            );
+        } catch (\Throwable) {
+            // non-critical
+        }
+        $context['customer_name']  = $cleanName;
+        $context['customer_phone'] = $normalizedPhone;
+    }
+
+    error_log("[VapiWebhook] [request_specialist_contact] callId={$callId}, id={$id}, channel={$this->channel}");
+
+    return [
+        'success' => true,
+        'status'  => 'saved',
+        'request' => ['id' => (string) $id],
+    ];
+}
+
     private function getCarSpecifications(array $params, string $callId, array &$context): array
     {
         $modelName = trim($params['model_name'] ?? '');
@@ -1311,7 +1372,8 @@ private function cancelAppointment(array $params, string $callId): array
         ];
 
         $this->redis->set($cacheKey, $result, 600);
-        $context['car_focus'] = $car['id'];
+        $context['car_focus']   = $car['id'];
+        $context['last_car_id'] = (int) $car['id'];
         $this->carModel->logQuery($callId, "specs:{$modelName}", $car['id'], 'get_specs');
 
         return $result;
@@ -1465,7 +1527,8 @@ private function cancelAppointment(array $params, string $callId): array
             ];
         }
 
-        $context['car_focus'] = $car['model_name'];
+        $context['car_focus']   = $car['model_name'];
+        $context['last_car_id'] = (int) $car['id'];
         $context['latest_images'] = [
             'model_name' => $car['model_name'],
             'images'     => $images,
@@ -1500,7 +1563,7 @@ private function cancelAppointment(array $params, string $callId): array
         if (!$car) {
             return ['error' => "ما لقيت سيارة بهاد الاسم"];
         }
-
+// note: لازم نستخدم $context بالمرجع بهاي الدالة، شوفي التعديل بالتوقيع تحت
         $colors = \BYD\Models\Database::getInstance()->query(
             'SELECT color_name_ar, color_name_en, color_type FROM car_colors WHERE car_id = ? ORDER BY color_type',
             [$car['id']]
@@ -2555,6 +2618,23 @@ note_text: نص الملاحظة بس، ممنوع تحطي الاسم أو ال
 
 إذا العميل سبق أعطى رأيه من تلقاء نفسه أثناء المكالمة، استخدمي save_customer_feedback مباشرة وما تعيدي سؤاله بنهاية المكالمة.
 
+## 6.65 عرض زيارة الفرع أو التواصل مع مختص (بعد إعطاء تفاصيل سيارة)
+
+### القاعدة
+- هاد عرض إضافي بعد إعطاء التفاصيل، مش بديل عنها. لازم تعطي العميل المعلومة اللي سألها كاملة أولاً وبنفس الأسلوب المعتاد.
+- اعرضيه **مرة وحدة بس بكل المكالمة**، مش بعد كل سؤال تفاصيل.
+- ما تعرضيه إلا لما تحسي إن العميل وصل لنقطة اهتمام واضحة بسيارة معينة — مثلاً سأل عدة أسئلة متتالية عن نفس الموديل، أو بان من كلامه إنه مقتنع أو ميال يشتريها أو جاي يقارن عشان يقرر. ما تعرضيه بعد أول سؤال عابر أو سؤال استكشافي بسيط.
+- إذا العميل تجاهل العرض أو رد عليه بشكل سلبي (زي "لأ شكراً" أو غيّر الموضوع)، **ما تعيدي عرضه مرة تانية** بنفس المكالمة تحت أي ظرف.
+- إذا العميل وافق، اسأليه إذا بده يحجز موعد زيارة للفرع أو يفضل حد من المختصين يتواصل معه، وكمّلي حسب اختياره (زيارة → قسم 6.7 تحت، تواصل مع مختص → استخدمي request_specialist_contact).
+
+### صياغة العرض (مثال، نوّعي حسب السياق)
+"بتحب تحجزلك موعد تزورنا بالفرع وتشوفها عن قرب، أو تفضل حدا من المختصين يتواصل معك؟"
+
+### التواصل مع مختص (request_specialist_contact)
+- إذا اختار العميل "حدا يتواصل معي" بدل الزيارة، خدي منه اسمه الثلاثي ورقم جواله (إلا إذا كانوا موجودين مسبقاً بنفس المكالمة)، وبعدين استخدمي request_specialist_contact.
+- إذا رجعت success:true → أكدي له بجملة طبيعية إنه رح يتواصل معه حدا من الفريق قريباً، بدون عبارات آلية.
+- إذا رجعت INVALID_NAME أو INVALID_PHONE → اطلبي المعلومة الناقصة بنفس أسلوب قسم الملاحظات، وأعيدي المحاولة.
+
 ## 6.7 حجز المواعيد
 
 ### الهدف
@@ -3463,7 +3543,7 @@ PROMPT;
 - بدو يحجز موعد لزيارة الفرع أو يسأل "امتى بقدر أجي" → check_appointment_availability ثم book_appointment (شوفي قسم 5.5)
 - بدو يعدّل موعده أو يغيره → find_appointment أولاً، ثم check_appointment_availability، ثم reschedule_appointment
 - بدو يلغي موعده → find_appointment أولاً، ثم cancel_appointment بعد تأكيده
-
+- العميل مهتم بسيارة وبدو حدا يتواصل معه بدل ما يزور الفرع → request_specialist_contact (شوفي قسم 5.4)
 كل سؤال يحتاج بيانات فعلية (مواصفات، أسعار، ألوان، ضمان، مقارنة) لازم يمر عبر الأداة المناسبة أولاً — ممنوع تجاوبي من عندك أو تخمّني رقم.
 
 - حجم الصندوق (cargo_liters) وقدرة الجر (towing_kg) بيرجعوا مباشرة مع بيانات السيارة من get_car_specifications، مش جوا قائمة المواصفات العادية. اذكريهم بشكل طبيعي إذا العميل سأل عنهم، ولو كانت القيمة فاضية قولي إنك ما عندك معلومة مؤكدة حالياً.
@@ -3485,6 +3565,23 @@ PROMPT;
 - إذا كان رأياً إيجابياً أو سلبياً فقط استخدمي save_customer_feedback.
 - إذا ذكر مشكلة تحتاج متابعة استخدمي save_customer_note.
 - إذا جمع رأياً + مشكلة استخدمي الأداتين.
+
+## 5.4 عرض زيارة الفرع أو التواصل مع مختص (بعد إعطاء تفاصيل سيارة)
+
+### القاعدة
+- هاد عرض إضافي بعد إعطاء التفاصيل، مش بديل عنها. أعطي العميل المعلومة اللي سألها كاملة أولاً.
+- اعرضيه **مرة وحدة بس بكل المحادثة**، مش بعد كل سؤال تفاصيل.
+- ما تعرضيه إلا لما تحسي إن العميل وصل لنقطة اهتمام واضحة بسيارة معينة — مثلاً سأل عدة أسئلة متتالية عن نفس الموديل، أو بان من كلامه إنه مقتنع أو ميال يشتريها. ما تعرضيه بعد أول سؤال عابر.
+- إذا العميل تجاهل العرض أو رد بشكل سلبي، **ما تعيديه مرة تانية** بنفس المحادثة.
+- إذا وافق، اسأليه إذا بده يحجز موعد زيارة للفرع أو يفضل حدا من المختصين يتواصل معه.
+
+### صياغة العرض (مثال، نوّعي حسب السياق)
+"بتحب تحجزلك موعد تزورنا بالفرع، أو تفضل حدا من المختصين يتواصل معك؟"
+
+### التواصل مع مختص (request_specialist_contact)
+- إذا اختار العميل "حدا يتواصل معي"، خدي اسمه الثلاثي ورقم جواله (إلا إذا موجودين مسبقاً بنفس الجلسة)، ثم استخدمي request_specialist_contact.
+- إذا رجعت success:true → أكدي له بجملة طبيعية إنه رح يتواصل معه حدا من الفريق قريباً.
+- إذا رجعت INVALID_NAME أو INVALID_PHONE → اطلبي المعلومة الناقصة وأعيدي المحاولة.
 
 ## 5.5 حجز المواعيد
 
@@ -4127,6 +4224,30 @@ $prompt .= "\n\n## رسالة الترحيب لأول تواصل مع العمي
                 ],
             ],
             'required' => ['appointment_id'],
+        ],
+    ],
+    'messages' => [
+        ['type' => 'request-start', 'content' => ''],
+    ],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'request_specialist_contact',
+        'description' => 'تسجيل طلب تواصل من أحد المختصين مع العميل بخصوص السيارة اللي كان يسأل عنها، بديل عن حجز زيارة فعلية للفرع. استخدميها فقط إذا اختار العميل صراحة إنه يفضل حد يتواصل معه بدل ما يزور الفرع بنفسه. لازم اسم العميل الثلاثي ورقم جواله.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'customer_name' => [
+                    'type'        => 'string',
+                    'description' => 'اسم العميل الثلاثي كما قاله بالضبط، بدون أي تعديل أو تصحيح منك',
+                ],
+                'phone_number' => [
+                    'type'        => 'string',
+                    'description' => 'رقم جوال العميل كما قاله بالضبط، بدون أي تعديل من طرفك',
+                ],
+            ],
+            'required' => ['customer_name', 'phone_number'],
         ],
     ],
     'messages' => [
