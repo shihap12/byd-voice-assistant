@@ -17,6 +17,8 @@ final class VapiWebhookController
     private CarModel        $carModel;
     private AppointmentModel $appointmentModel;
     private ContactRequestModel $contactRequestModel;
+    private \BYD\Models\VisitModel $visitModel;
+
     /**
      * القناة اللي بتستخدم الأدوات هلق (voice / chat / whatsapp).
      * الافتراضي "voice" (Vapi). ChatController وWhatsAppController
@@ -30,6 +32,7 @@ final class VapiWebhookController
         $this->carModel         = new CarModel();
         $this->appointmentModel = new AppointmentModel();
         $this->contactRequestModel = new ContactRequestModel();
+        $this->visitModel = new \BYD\Models\VisitModel();
     }
 
     public function handle(): void
@@ -624,6 +627,11 @@ PROMPT;
             'reschedule_appointment'         => $this->rescheduleAppointment($arguments, $callId),
             'cancel_appointment'             => $this->cancelAppointment($arguments, $callId),
             'request_specialist_contact'     => $this->requestSpecialistContact($arguments, $callId, $context),
+            'check_visit_availability' => $this->checkVisitAvailability($arguments),
+        'book_visit'               => $this->bookVisit($arguments, $callId, $context),
+        'find_visit'               => $this->findVisit($arguments),
+        'reschedule_visit'         => $this->rescheduleVisit($arguments, $callId),
+        'cancel_visit'             => $this->cancelVisit($arguments, $callId),
             default                  => ['error' => "دالة غير معروفة: {$functionName}"],
         };
     }
@@ -1287,6 +1295,359 @@ private function cancelAppointment(array $params, string $callId): array
     ];
 }
 
+/**
+ * check_visit_availability
+ *
+ * نفس منطق check_appointment_availability بالضبط، بس لجدول visits المنفصل.
+ * الزيارة = العميل جاي يتفرج على السيارة بالمعرض (مش صيانة سيارته).
+ */
+private function checkVisitAvailability(array $params): array
+{
+    $date = trim((string) ($params['preferred_date'] ?? ''));
+    $time = $this->normalizeAppointmentTime((string) ($params['preferred_time'] ?? ''));
+
+    if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        return ['success' => false, 'error' => 'INVALID_DATE'];
+    }
+    if ($time !== '' && !preg_match('/^\d{2}:\d{2}$/', $time)) {
+        return ['success' => false, 'error' => 'INVALID_TIME'];
+    }
+
+    $hours   = $this->visitModel->getWorkingHours();
+    $today   = date('Y-m-d');
+    $nowTime = date('H:i');
+    $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    $freeSlots = $this->visitModel->getFreeSlotsForDate($date);
+    if ($date === $today) {
+        $nowMin = ((int) date('H')) * 60 + ((int) date('i'));
+        $freeSlots = array_values(array_filter(
+            $freeSlots,
+            function (string $t) use ($nowMin) {
+                [$h, $m] = explode(':', substr($t, 0, 5));
+                return (((int) $h) * 60 + (int) $m) > $nowMin;
+            }
+        ));
+    }
+
+    if ($date === $today && $time !== '' && $time <= $nowTime) {
+        return [
+            'success'    => false,
+            'error'      => 'TIME_PASSED',
+            'free_slots' => $freeSlots,
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    if ($date < $today || $date > $maxDate) {
+        return [
+            'success'       => false,
+            'error'         => 'OUT_OF_RANGE',
+            'earliest_date' => $today,
+            'latest_date'   => $maxDate,
+        ];
+    }
+
+    if (!\BYD\Models\VisitModel::isWorkingDay($date)) {
+        return [
+            'success'    => false,
+            'error'      => 'CLOSED_DAY',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time !== '' ? $time : null),
+        ];
+    }
+
+    if ($time !== '') {
+        if ($time < $hours['start'] || $time >= $hours['end']) {
+            return [
+                'success'       => false,
+                'error'         => 'OUTSIDE_WORKING_HOURS',
+                'working_hours' => $hours,
+                'free_slots'    => $freeSlots,
+                'suggestion'    => $this->visitModel->findNearestAvailableSlot($date, $time),
+            ];
+        }
+
+        if ($this->visitModel->isSlotFree($date, $time, $hours['slot_minutes'])) {
+            return [
+                'success'     => true,
+                'available'   => true,
+                'date'        => $date,
+                'time'        => $time,
+                'date_spoken' => ArabicPronunciationService::dateToWords($date),
+                'time_spoken' => ArabicPronunciationService::timeToWords($time),
+                'free_slots'  => $freeSlots,
+            ];
+        }
+
+        return [
+            'success'    => true,
+            'available'  => false,
+            'free_slots' => $freeSlots,
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    return [
+        'success'    => true,
+        'available'  => !empty($freeSlots),
+        'free_slots' => $freeSlots,
+        'suggestion' => $this->visitModel->findNearestAvailableSlot($date),
+    ];
+}
+
+/**
+ * book_visit — حجز زيارة فعلية (منفصل عن مواعيد الصيانة appointments).
+ */
+private function bookVisit(array $params, string $callId, array &$context): array
+{
+    $rawName  = trim((string) ($params['customer_name'] ?? ''));
+    $rawPhone = trim((string) ($params['phone_number'] ?? ''));
+    $date     = trim((string) ($params['visit_date'] ?? ''));
+    $time     = $this->normalizeAppointmentTime((string) ($params['visit_time'] ?? ''));
+
+    if (!$this->isValidCustomerName($rawName)) {
+        return ['success' => false, 'error' => 'INVALID_NAME'];
+    }
+
+    $normalizedPhone = $this->normalizePhone($rawPhone);
+    if ($normalizedPhone === null) {
+        return ['success' => false, 'error' => 'INVALID_PHONE'];
+    }
+
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) || !preg_match('/^\d{2}:\d{2}$/', $time)) {
+        return ['success' => false, 'error' => 'INVALID_DATETIME'];
+    }
+
+    $hours   = $this->visitModel->getWorkingHours();
+    $today   = date('Y-m-d');
+    $nowTime = date('H:i');
+    $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($date === $today && $time <= $nowTime) {
+        return [
+            'success'    => false,
+            'error'      => 'TIME_PASSED',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    if ($date < $today || $date > $maxDate || !\BYD\Models\VisitModel::isWorkingDay($date)) {
+        return [
+            'success'    => false,
+            'error'      => 'INVALID_DAY',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot(max($date, $today), $time),
+        ];
+    }
+
+    if ($time < $hours['start'] || $time >= $hours['end']) {
+        return [
+            'success'    => false,
+            'error'      => 'OUTSIDE_WORKING_HOURS',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    if (!$this->visitModel->isSlotFree($date, $time, $hours['slot_minutes'])) {
+        return [
+            'success'    => false,
+            'error'      => 'SLOT_TAKEN',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+        ];
+    }
+
+    $cleanName = preg_replace('/\s+/u', ' ', $rawName);
+
+    $id = $this->visitModel->create([
+        'customer_name'    => $cleanName,
+        'phone_number'     => $normalizedPhone,
+        'car_id'           => $context['last_car_id'] ?? null,
+        'visit_date'       => $date,
+        'visit_time'       => $time,
+        'duration_minutes' => $hours['slot_minutes'],
+        'source'           => $this->channel,
+        'session_id'       => $callId,
+    ]);
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:visits');
+
+    if ($this->channel === 'whatsapp') {
+        try {
+            $db = \BYD\Models\Database::getInstance();
+            $db->execute(
+                "UPDATE customers SET name = ? WHERE phone_number = ? AND (name IS NULL OR name = '')",
+                [$cleanName, $normalizedPhone]
+            );
+        } catch (\Throwable) {
+        }
+        $context['customer_name']  = $cleanName;
+        $context['customer_phone'] = $normalizedPhone;
+    }
+
+    error_log("[VapiWebhook] [book_visit] callId={$callId}, id={$id}, date={$date}, time={$time}, channel={$this->channel}");
+
+    return [
+        'success' => true,
+        'status'  => 'booked',
+        'visit'   => [
+            'id'          => (string) $id,
+            'date'        => $date,
+            'time'        => $time,
+            'date_spoken' => ArabicPronunciationService::dateToWords($date),
+            'time_spoken' => ArabicPronunciationService::timeToWords($time),
+        ],
+    ];
+}
+
+private function findVisit(array $params): array
+{
+    $rawName  = trim((string) ($params['customer_name'] ?? ''));
+    $rawPhone = trim((string) ($params['phone_number'] ?? ''));
+
+    if (empty($rawPhone)) {
+        return ['success' => false, 'error' => 'MISSING_PHONE'];
+    }
+
+    $normalizedPhone = $this->normalizePhone($rawPhone);
+    if ($normalizedPhone === null) {
+        return ['success' => false, 'error' => 'INVALID_PHONE'];
+    }
+
+    if ($rawName !== '') {
+        $visit = $this->visitModel->findScheduledByPhoneAndName($normalizedPhone, $rawName);
+        if ($visit !== false) {
+            return [
+                'success' => true,
+                'found'   => true,
+                'visit'   => [
+                    'id'   => (string) $visit['id'],
+                    'date' => $visit['visit_date'],
+                    'time' => substr($visit['visit_time'], 0, 5),
+                    'name' => $visit['customer_name'],
+                ],
+            ];
+        }
+    }
+
+    $rows = $this->visitModel->findScheduledByPhone($normalizedPhone);
+    if (empty($rows)) {
+        return ['success' => true, 'found' => false, 'error' => 'NO_VISIT_FOUND'];
+    }
+
+    $visit = $rows[0];
+    return [
+        'success' => true,
+        'found'   => true,
+        'visit'   => [
+            'id'   => (string) $visit['id'],
+            'date' => $visit['visit_date'],
+            'time' => substr($visit['visit_time'], 0, 5),
+            'name' => $visit['customer_name'],
+        ],
+    ];
+}
+
+private function rescheduleVisit(array $params, string $callId): array
+{
+    $visitId = (int) ($params['visit_id'] ?? 0);
+    $newDate = trim((string) ($params['new_date'] ?? ''));
+    $newTime = $this->normalizeAppointmentTime((string) ($params['new_time'] ?? ''));
+
+    if ($visitId <= 0) {
+        return ['success' => false, 'error' => 'MISSING_VISIT_ID'];
+    }
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $newDate) || !preg_match('/^\d{2}:\d{2}$/', $newTime)) {
+        return ['success' => false, 'error' => 'INVALID_DATETIME'];
+    }
+
+    $visit = $this->visitModel->findById($visitId);
+    if (!$visit || $visit['status'] !== 'scheduled') {
+        return ['success' => false, 'error' => 'VISIT_NOT_FOUND'];
+    }
+
+    $hours   = $this->visitModel->getWorkingHours();
+    $today   = date('Y-m-d');
+    $nowTime = date('H:i');
+    $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
+
+    if ($newDate === $today && $newTime <= $nowTime) {
+        return [
+            'success'    => false,
+            'error'      => 'TIME_PASSED',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($newDate, $newTime),
+        ];
+    }
+
+    if ($newDate < $today || $newDate > $maxDate || !\BYD\Models\VisitModel::isWorkingDay($newDate)) {
+        return [
+            'success'    => false,
+            'error'      => 'INVALID_DAY',
+            'suggestion' => $this->visitModel->findNearestAvailableSlot(max($newDate, $today), $newTime),
+        ];
+    }
+
+    if ($newTime < $hours['start'] || $newTime >= $hours['end']) {
+        return [
+            'success'       => false,
+            'error'         => 'OUTSIDE_WORKING_HOURS',
+            'working_hours' => $hours,
+            'suggestion'    => $this->visitModel->findNearestAvailableSlot($newDate, $newTime),
+        ];
+    }
+
+    if (!$this->visitModel->isSlotFree($newDate, $newTime, $hours['slot_minutes'])) {
+        $freeSlots = $this->visitModel->getFreeSlotsForDate($newDate);
+        return [
+            'success'    => false,
+            'error'      => 'SLOT_TAKEN',
+            'free_slots' => array_slice($freeSlots, 0, 6),
+            'suggestion' => $this->visitModel->findNearestAvailableSlot($newDate, $newTime),
+        ];
+    }
+
+    $ok = $this->visitModel->rescheduleById($visitId, $newDate, $newTime);
+    if (!$ok) {
+        return ['success' => false, 'error' => 'RESCHEDULE_FAILED'];
+    }
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:visits');
+
+    return [
+        'success' => true,
+        'status'  => 'rescheduled',
+        'visit'   => ['id' => (string) $visitId, 'date' => $newDate, 'time' => $newTime],
+    ];
+}
+
+private function cancelVisit(array $params, string $callId): array
+{
+    $visitId = (int) ($params['visit_id'] ?? 0);
+
+    if ($visitId <= 0) {
+        return ['success' => false, 'error' => 'MISSING_VISIT_ID'];
+    }
+
+    $visit = $this->visitModel->findById($visitId);
+    if (!$visit || $visit['status'] !== 'scheduled') {
+        return ['success' => false, 'error' => 'VISIT_NOT_FOUND'];
+    }
+
+    $ok = $this->visitModel->cancelById($visitId);
+    if (!$ok) {
+        return ['success' => false, 'error' => 'CANCEL_FAILED'];
+    }
+
+    \BYD\Models\RedisClient::getInstance()->delete('cache:admin:visits');
+
+    return [
+        'success' => true,
+        'status'  => 'cancelled',
+        'cancelled_visit' => [
+            'id'   => (string) $visitId,
+            'date' => $visit['visit_date'],
+            'time' => substr($visit['visit_time'], 0, 5),
+        ],
+    ];
+}
 
 /**
  * request_specialist_contact
@@ -2708,6 +3069,22 @@ note_text: نص الملاحظة بس، ممنوع تحطي الاسم أو ال
 
 ## 6.7 حجز المواعيد
 
+## تمييز إلزامي: موعد صيانة VS زيارة الفرع
+
+في نوعين مختلفين تماماً من الحجوزات، ولازم تفرقي بينهم من كلام العميل قبل ما تستخدمي أي أداة:
+
+**موعد صيانة (appointment)** — استخدمي check_appointment_availability / book_appointment / find_appointment / reschedule_appointment / cancel_appointment:
+- العميل بدو يجيب سيارته الحالية للصيانة أو الفحص أو الإصلاح.
+- كلمات دالة: "بدي أعمل صيانة"، "سيارتي فيها عطل"، "بدي أفحص السيارة"، "بدي أجيب سيارتي عندكم".
+
+**زيارة الفرع (visit)** — استخدمي check_visit_availability / book_visit / find_visit / reschedule_visit / cancel_visit:
+- العميل بدو يجي يتفرج على سيارة (يشوفها عالطبيعة، يقارن، يفكر يشتري) — وليس عنده سيارة يصلحها.
+- كلمات دالة: "بدي أشوف السيارة"، "بدي أزوركم"، "بدي أجي أتفرج"، "بدي أشوف الموديل عالطبيعة"، أو أي طلب زيارة جاي بعد نقاش عن سيارة معينة (قسم 6.65 / 5.4 عرض الزيارة).
+
+إذا ما كان واضح من كلام العميل أي نوع يقصد، اسأليه بجملة وحدة: "بتحب تجي تتفرج على السيارة، ولا عندك سيارة بدها صيانة؟" بعدين استخدمي الأداة المناسبة.
+
+كل باقي خطوات هاد القسم (التحقق من التوفر، التأكيد، التعديل، الإلغاء) نفسها بالضبط لكن بأدوات الزيارة المنفصلة إذا كان طلب العميل زيارة.
+
 ### الهدف
 مساعدة العميل يحجز موعد لزيارة الفرع، فقط إذا طلب هيك صراحة (متل: "بدي أحجز موعد" / "بدي أجي عندكم" / "امتى بقدر أجي" / "بدي أشوف السيارة عالطبيعة").
 
@@ -3685,6 +4062,22 @@ PROMPT;
 
 ## 5.5 حجز المواعيد
 
+## تمييز إلزامي: موعد صيانة VS زيارة الفرع
+
+في نوعين مختلفين تماماً من الحجوزات، ولازم تفرقي بينهم من كلام العميل قبل ما تستخدمي أي أداة:
+
+**موعد صيانة (appointment)** — استخدمي check_appointment_availability / book_appointment / find_appointment / reschedule_appointment / cancel_appointment:
+- العميل بدو يجيب سيارته الحالية للصيانة أو الفحص أو الإصلاح.
+- كلمات دالة: "بدي أعمل صيانة"، "سيارتي فيها عطل"، "بدي أفحص السيارة"، "بدي أجيب سيارتي عندكم".
+
+**زيارة الفرع (visit)** — استخدمي check_visit_availability / book_visit / find_visit / reschedule_visit / cancel_visit:
+- العميل بدو يجي يتفرج على سيارة (يشوفها عالطبيعة، يقارن، يفكر يشتري) — وليس عنده سيارة يصلحها.
+- كلمات دالة: "بدي أشوف السيارة"، "بدي أزوركم"، "بدي أجي أتفرج"، "بدي أشوف الموديل عالطبيعة"، أو أي طلب زيارة جاي بعد نقاش عن سيارة معينة (قسم 6.65 / 5.4 عرض الزيارة).
+
+إذا ما كان واضح من كلام العميل أي نوع يقصد، اسأليه بجملة وحدة: "بتحب تجي تتفرج على السيارة، ولا عندك سيارة بدها صيانة؟" بعدين استخدمي الأداة المناسبة.
+
+كل باقي خطوات هاد القسم (التحقق من التوفر، التأكيد، التعديل، الإلغاء) نفسها بالضبط لكن بأدوات الزيارة المنفصلة إذا كان طلب العميل زيارة.
+
 ### الهدف
 مساعدة العميل يحجز موعد لزيارة الفرع، فقط إذا طلب هيك صراحة (متل: "بدي أحجز موعد" / "بدي أجي عندكم" / "امتى بقدر أجي" / "بدي أشوف السيارة عالطبيعة").
 
@@ -4353,6 +4746,89 @@ $prompt .= "\n\n## رسالة الترحيب لأول تواصل مع العمي
         ['type' => 'request-start', 'content' => ''],
     ],
 ],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'check_visit_availability',
+        'description' => 'التحقق من توفر موعد لزيارة الفرع فقط (العميل جاي يتفرج على سيارة/يشوفها عالطبيعة) — منفصل تماماً عن مواعيد صيانة السيارة. استخدمي هاي الأداة فقط لما العميل يطلب "زيارة" أو "أشوف السيارة" أو "أجي عندكم أتفرج"، وليس عندما يطلب صيانة لسيارته.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'preferred_date' => ['type' => 'string', 'description' => 'التاريخ المطلوب بصيغة YYYY-MM-DD'],
+                'preferred_time' => ['type' => 'string', 'description' => 'الوقت المطلوب بصيغة HH:MM (اختياري)'],
+            ],
+            'required' => ['preferred_date'],
+        ],
+    ],
+    'messages' => [['type' => 'request-start', 'content' => '']],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'book_visit',
+        'description' => 'تأكيد وحجز زيارة فعلية للفرع (غير مواعيد الصيانة)، بعد التحقق من التوفر عبر check_visit_availability وموافقة العميل الصريحة.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'customer_name' => ['type' => 'string', 'description' => 'اسم العميل الثلاثي كما قاله بالضبط'],
+                'phone_number'  => ['type' => 'string', 'description' => 'رقم جوال العميل كما قاله بالضبط'],
+                'visit_date'    => ['type' => 'string', 'description' => 'تاريخ الزيارة النهائي بصيغة YYYY-MM-DD'],
+                'visit_time'    => ['type' => 'string', 'description' => 'وقت الزيارة النهائي بصيغة HH:MM'],
+            ],
+            'required' => ['customer_name', 'phone_number', 'visit_date', 'visit_time'],
+        ],
+    ],
+    'messages' => [['type' => 'request-start', 'content' => '']],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'find_visit',
+        'description' => 'البحث عن زيارة محجوزة (غير مواعيد الصيانة) بناءً على اسم العميل ورقم جواله. استخدميها قبل تعديل أو إلغاء زيارة.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'customer_name' => ['type' => 'string', 'description' => 'اسم العميل الثلاثي'],
+                'phone_number'  => ['type' => 'string', 'description' => 'رقم جوال العميل'],
+            ],
+            'required' => ['phone_number'],
+        ],
+    ],
+    'messages' => [['type' => 'request-start', 'content' => '']],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'reschedule_visit',
+        'description' => 'تعديل تاريخ أو وقت زيارة محجوزة موجودة مسبقاً (غير مواعيد الصيانة). استخدمي find_visit أولاً لتجيبي visit_id.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'visit_id' => ['type' => 'string', 'description' => 'رقم الزيارة الموجودة (من find_visit)'],
+                'new_date' => ['type' => 'string', 'description' => 'التاريخ الجديد بصيغة YYYY-MM-DD'],
+                'new_time' => ['type' => 'string', 'description' => 'الوقت الجديد بصيغة HH:MM'],
+            ],
+            'required' => ['visit_id', 'new_date', 'new_time'],
+        ],
+    ],
+    'messages' => [['type' => 'request-start', 'content' => '']],
+],
+[
+    'type' => 'function',
+    'function' => [
+        'name'        => 'cancel_visit',
+        'description' => 'إلغاء زيارة محجوزة موجودة مسبقاً (غير مواعيد الصيانة). استخدمي find_visit أولاً لتجيبي visit_id، واطلبي تأكيد صريح من العميل قبل الإلغاء.',
+        'parameters'  => [
+            'type'       => 'object',
+            'properties' => [
+                'visit_id' => ['type' => 'string', 'description' => 'رقم الزيارة المراد إلغاؤها (من find_visit)'],
+            ],
+            'required' => ['visit_id'],
+        ],
+    ],
+    'messages' => [['type' => 'request-start', 'content' => '']],
+],
+
             
         ];
     }

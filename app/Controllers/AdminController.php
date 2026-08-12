@@ -444,6 +444,165 @@ public function apiGetAppointments(): void
         echo json_encode(['success' => true]);
     }
 
+    // ─────────────────────────────────────────────────────────
+// Visits (تبويب الزيارات — منفصل عن المواعيد appointments)
+// ─────────────────────────────────────────────────────────
+
+public function apiGetVisits(): void
+{
+    $this->startSession();
+    if ($this->getAuthenticatedAdmin() === null) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        return;
+    }
+
+    header('Content-Type: application/json');
+
+    $visitModel = new \BYD\Models\VisitModel();
+
+    $missedCount = $visitModel->autoMarkMissed();
+    if ($missedCount > 0) {
+        $this->redis->delete('cache:admin:visits');
+    }
+
+    $status = trim((string) ($_GET['status'] ?? ''));
+    $from   = trim((string) ($_GET['from'] ?? ''));
+    $to     = trim((string) ($_GET['to'] ?? ''));
+
+    $filters = [];
+    if ($status !== '' && in_array($status, ['scheduled', 'cancelled', 'completed', 'missed'], true)) {
+        $filters['status'] = $status;
+    }
+    if ($from !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
+        $filters['from'] = $from;
+    }
+    if ($to !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+        $filters['to'] = $to;
+    }
+
+    $cacheKey = 'cache:admin:visits';
+    if (empty($filters)) {
+        $cached = $this->redis->get($cacheKey);
+        if ($cached !== null) {
+            $cached = array_map(function ($v) {
+                if (isset($v['id'])) $v['id'] = (string) $v['id'];
+                return $v;
+            }, $cached);
+            echo json_encode(['success' => true, 'visits' => $cached], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+    }
+
+    $visits = $visitModel->getAll($filters);
+    $visits = array_map(function ($v) {
+        if (isset($v['id'])) $v['id'] = (string) $v['id'];
+        return $v;
+    }, $visits);
+
+    if (empty($filters)) {
+        $this->redis->set($cacheKey, $visits, 31536000);
+    }
+
+    echo json_encode(['success' => true, 'visits' => $visits], JSON_UNESCAPED_UNICODE);
+}
+
+public function apiUpdateVisitStatus(string $id): void
+{
+    $this->startSession();
+    if ($this->getAuthenticatedAdmin() === null) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        return;
+    }
+
+    header('Content-Type: application/json');
+
+    $raw  = file_get_contents('php://input');
+    $body = json_decode($raw, true) ?? [];
+
+    $csrfToken = (string) ($body['csrf_token'] ?? '');
+    if (!Security::validateCsrfToken(session_id(), $csrfToken)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'رمز الحماية غير صالح أو منتهي، حاول مرة أخرى.']);
+        return;
+    }
+
+    $status = trim((string) ($body['status'] ?? ''));
+    if (!in_array($status, ['scheduled', 'cancelled', 'completed', 'missed'], true)) {
+        http_response_code(422);
+        echo json_encode(['success' => false, 'message' => 'حالة غير صالحة.']);
+        return;
+    }
+
+    $visitModel = new \BYD\Models\VisitModel();
+    $updated = $visitModel->updateStatus((int) $id, $status);
+
+    if (!$updated) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => 'الزيارة غير موجودة.']);
+        return;
+    }
+
+    $this->redis->delete('cache:admin:visits');
+
+    echo json_encode(['success' => true]);
+}
+
+public function apiEditVisit(string $id): void
+{
+    $this->startSession();
+    if ($this->getAuthenticatedAdmin() === null) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+        return;
+    }
+
+    header('Content-Type: application/json');
+
+    $raw  = file_get_contents('php://input');
+    $body = json_decode($raw, true) ?? [];
+
+    $csrfToken = (string) ($body['csrf_token'] ?? '');
+    if (!Security::validateCsrfToken(session_id(), $csrfToken)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'رمز الحماية غير صالح أو منتهي، حاول مرة أخرى.']);
+        return;
+    }
+
+    $allowedStatuses = ['scheduled', 'cancelled', 'completed', 'missed'];
+    $data = [];
+
+    if (!empty($body['visit_date'])) $data['visit_date'] = $body['visit_date'];
+    if (!empty($body['visit_time'])) $data['visit_time'] = $body['visit_time'];
+    if (!empty($body['customer_name'])) $data['customer_name'] = $body['customer_name'];
+    if (!empty($body['phone_number'])) $data['phone_number'] = $body['phone_number'];
+    if (array_key_exists('notes', $body)) $data['notes'] = $body['notes'];
+    if (!empty($body['status']) && in_array($body['status'], $allowedStatuses, true)) {
+        $data['status'] = $body['status'];
+    }
+
+    if (empty($data)) {
+        http_response_code(422);
+        echo json_encode(['success' => false, 'message' => 'لا توجد بيانات للتحديث.']);
+        return;
+    }
+
+    $visitModel = new \BYD\Models\VisitModel();
+    $updated = $visitModel->updateDetails((int) $id, $data);
+
+    if (!$updated) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => 'الزيارة غير موجودة أو لم يتغير شيء.']);
+        return;
+    }
+
+    $this->redis->delete('cache:admin:visits');
+
+    echo json_encode(['success' => true]);
+}
+
+
     public function dashboard(): void
     {
         $this->startSession();

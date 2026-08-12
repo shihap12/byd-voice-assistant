@@ -201,6 +201,18 @@ $router->add('GET', '/api/cars', function (): void {
     (new AdminController())->apiGetCars();
 });
 
+$router->add('GET', '/admin/api/visits', function (): void {
+    (new AdminController())->apiGetVisits();
+});
+
+$router->add('POST', '/admin/api/visits/{id}', function (string $id): void {
+    (new AdminController())->apiUpdateVisitStatus($id);
+});
+
+$router->add('PATCH', '/admin/api/visits/{id}/edit', function (string $id): void {
+    (new AdminController())->apiEditVisit($id);
+});
+
 $router->add('GET', '/api/public/cars', function (): void {
     (new AdminController())->apiGetPublicCars();
 });
