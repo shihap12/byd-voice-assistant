@@ -48,23 +48,29 @@ final class VapiWebhookController
             Security::jsonError('Invalid payload', 400);
         }
 
-        $message = $payload['message'];
-        $type    = $message['type'];
+$message = $payload['message'];
+$type    = $message['type'];
 
-        // Idempotency check using webhook request ID or hash of message
-        $eventId = $payload['id'] ?? $message['id'] ?? null;
-        if (!$eventId) {
-            $eventId = md5(json_encode($message));
-        }
+// الـ idempotency لازم تنطبق فقط على أحداث دورة حياة المكالمة
+// (conversation-start, status-update, end-of-call-report...)
+// وليس على tool calls — لازم يترد عليها كل مرة مهما تكررت
+$skipIdempotency = in_array($type, ['function-call', 'tool-calls'], true);
 
-        $lockKey = "webhook_processed:{$eventId}";
-        if ($this->redis->exists($lockKey)) {
-            error_log("[VapiWebhook] Duplicate event detected and ignored: type={$type}, id={$eventId}");
-            $this->jsonResponse(['status' => 'already_processed']);
-        }
-        $this->redis->set($lockKey, '1', 600); // 10 min TTL
+if (!$skipIdempotency) {
+    $eventId = $payload['id'] ?? $message['id'] ?? null;
+    if (!$eventId) {
+        $eventId = md5(json_encode($message));
+    }
 
-        error_log("[VapiWebhook] Received event: {$type} | Event ID: {$eventId}");
+    $lockKey = "webhook_processed:{$eventId}";
+    if ($this->redis->exists($lockKey)) {
+        error_log("[VapiWebhook] Duplicate event detected and ignored: type={$type}, id={$eventId}");
+        $this->jsonResponse(['status' => 'already_processed']);
+    }
+    $this->redis->set($lockKey, '1', 600); // 10 min TTL
+}
+
+error_log("[VapiWebhook] Received event: {$type}");
 
         match ($type) {
             'assistant-request'  => $this->handleAssistantRequest($message),
