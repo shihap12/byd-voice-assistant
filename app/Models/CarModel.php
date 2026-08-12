@@ -47,14 +47,14 @@ final class CarModel
         'atto 2'            => 'BYD ATTO 2',
         'atto2'             => 'BYD ATTO 2',
         'byd atto 2'        => 'BYD ATTO 2',
-        'اتو 2'             => 'BYD ATTO 2',
+        'أتو 2'             => 'BYD ATTO 2',
         'اتو2'              => 'BYD ATTO 2',
 
         // ATTO 3
         'atto 3'            => 'BYD ATTO 3',
         'atto3'             => 'BYD ATTO 3',
         'byd atto 3'        => 'BYD ATTO 3',
-        'اتو 3'             => 'BYD ATTO 3',
+        'أتو 3'             => 'BYD ATTO 3',
         'اتو3'              => 'BYD ATTO 3',
 
         // DOLPHIN
