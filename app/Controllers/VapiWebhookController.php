@@ -34,55 +34,64 @@ final class VapiWebhookController
 
     public function handle(): void
     {
-                $__t0 = microtime(true);
+        try {
+            $__t0 = microtime(true);
 
-        $rawBody   = file_get_contents('php://input');
-        $signature = $_SERVER['HTTP_X_VAPI_SECRET'] ?? '';
+            $rawBody   = file_get_contents('php://input');
+            $signature = $_SERVER['HTTP_X_VAPI_SECRET'] ?? '';
 
-        if (!Security::validateVapiSignature($rawBody, $signature)) {
-            Security::jsonError('Invalid webhook signature', 401);
+            if (!Security::validateVapiSignature($rawBody, $signature)) {
+                Security::jsonError('Invalid webhook signature', 401);
+            }
+
+            $payload = json_decode($rawBody, true);
+            if (!$payload || !isset($payload['message']['type'])) {
+                Security::jsonError('Invalid payload', 400);
+            }
+
+            $message = $payload['message'];
+            $type    = $message['type'];
+
+            // الـ idempotency لازم تنطبق فقط على أحداث دورة حياة المكالمة
+            // (conversation-start, status-update, end-of-call-report...)
+            // وليس على tool calls — لازم يترد عليها كل مرة مهما تكررت
+            $skipIdempotency = in_array($type, ['function-call', 'tool-calls'], true);
+
+            if (!$skipIdempotency) {
+                $eventId = $payload['id'] ?? $message['id'] ?? null;
+                if (!$eventId) {
+                    $eventId = md5(json_encode($message));
+                }
+
+                $lockKey = "webhook_processed:{$eventId}";
+                if ($this->redis->exists($lockKey)) {
+                    error_log("[VapiWebhook] Duplicate event detected and ignored: type={$type}, id={$eventId}");
+                    $this->jsonResponse(['status' => 'already_processed']);
+                }
+                $this->redis->set($lockKey, '1', 600); // 10 min TTL
+            }
+
+            error_log("[VapiWebhook] Received event: {$type}");
+
+            match ($type) {
+                'assistant-request'  => $this->handleAssistantRequest($message),
+                'conversation-start' => $this->handleConversationStart($message),
+                'status-update'      => $this->handleStatusUpdate($message),
+                'transcript'         => $this->handleTranscript($message),
+                'function-call'      => $this->handleFunctionCall($message),
+                'tool-calls'         => $this->handleFunctionCall($message),
+                'end-of-call-report' => $this->handleEndOfCall($message),
+                default              => $this->jsonResponse(['result' => 'ignored']),
+            };
+        } catch (\Throwable $e) {
+            error_log("[VapiWebhook] FATAL EXCEPTION: " . $e->getMessage() . " | file=" . $e->getFile() . ":" . $e->getLine());
+            http_response_code(200); // إلزامي: 200 مش 500 عشان Vapi يقبل الرد كـ نتيجة صحيحة
+            header('Content-Type: application/json');
+            echo json_encode(['results' => [['toolCallId' => '', 'result' => 'صار خلل تقني مؤقت، ممكن تعيد سؤالك؟']]], JSON_UNESCAPED_UNICODE);
+            exit;
         }
-
-        $payload = json_decode($rawBody, true);
-        if (!$payload || !isset($payload['message']['type'])) {
-            Security::jsonError('Invalid payload', 400);
-        }
-
-$message = $payload['message'];
-$type    = $message['type'];
-
-// الـ idempotency لازم تنطبق فقط على أحداث دورة حياة المكالمة
-// (conversation-start, status-update, end-of-call-report...)
-// وليس على tool calls — لازم يترد عليها كل مرة مهما تكررت
-$skipIdempotency = in_array($type, ['function-call', 'tool-calls'], true);
-
-if (!$skipIdempotency) {
-    $eventId = $payload['id'] ?? $message['id'] ?? null;
-    if (!$eventId) {
-        $eventId = md5(json_encode($message));
     }
 
-    $lockKey = "webhook_processed:{$eventId}";
-    if ($this->redis->exists($lockKey)) {
-        error_log("[VapiWebhook] Duplicate event detected and ignored: type={$type}, id={$eventId}");
-        $this->jsonResponse(['status' => 'already_processed']);
-    }
-    $this->redis->set($lockKey, '1', 600); // 10 min TTL
-}
-
-error_log("[VapiWebhook] Received event: {$type}");
-
-        match ($type) {
-            'assistant-request'  => $this->handleAssistantRequest($message),
-            'conversation-start' => $this->handleConversationStart($message),
-            'status-update'      => $this->handleStatusUpdate($message),
-            'transcript'         => $this->handleTranscript($message),
-            'function-call'      => $this->handleFunctionCall($message),
-            'tool-calls'         => $this->handleFunctionCall($message),
-            'end-of-call-report' => $this->handleEndOfCall($message),
-            default              => $this->jsonResponse(['result' => 'ignored']),
-        };
-    }
 
     // ─── Event Handlers ───────────────────────────────────────────────
 
@@ -267,7 +276,12 @@ error_log("[VapiWebhook] Received event: {$type}");
                 $arguments = json_decode($arguments, true) ?? [];
             }
 
-            $execResult = $this->executeTool($functionName, $arguments, $callId, $context);
+            try {
+                $execResult = $this->executeTool($functionName, $arguments, $callId, $context);
+            } catch (\Throwable $e) {
+                error_log("[VapiWebhook] [executeTool] EXCEPTION function={$functionName} callId={$callId}: " . $e->getMessage());
+                $execResult = ['error' => 'صار خلل تقني مؤقت، جربي تسألي مرة ثانية بعد شوي'];
+            }
 
             $results[] = [
                 'toolCallId' => $toolCallId,
