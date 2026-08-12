@@ -1721,7 +1721,8 @@ private function buildSystemPrompt(string $callId, string $gender = 'male'): str
             $historyText .= "العميل بدأ بالدردشة النصية معك قبل الانتقال للمكالمة الصوتية، وإليك ما تم نقاشه:\n";
             foreach ($context['chat_history'] as $msg) {
                 $roleName = ($msg['role'] === 'user') ? 'العميل' : "أنتِ ({$botName})";
-                $historyText .= "- {$roleName}: {$msg['text']}\n";
+                $msgText = $msg['text'] ?? $msg['content'] ?? $msg['message'] ?? '';
+$historyText .= "- {$roleName}: {$msgText}\n";
             }
             $historyText .= "\nيرجى متابعة الحديث مع العميل بناءً على هذا السياق والتاريخ السابق مباشرة دون ترحيب مكرر ودون أن تسأليه مجدداً عن الأمور التي ذكرها في الشات النصي.\n";
         }
