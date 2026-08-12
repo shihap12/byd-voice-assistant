@@ -133,11 +133,9 @@ final class VapiWebhookController
         $this->redis->setContext($callId, $context, 1800);
 
         // نمرر callId لبناء البرومبت — الآن chat_history موجودة بالـ context
-        $this->jsonResponse([
-            'messageResponse' => [
-                'assistant' => $this->getAssistantConfig($callId, $gender)
-            ]
-        ]);
+$this->jsonResponse([
+    'assistant' => $this->getAssistantConfig($callId, $gender)
+]);
     }
 
     private function handleConversationStart(array $message): void
@@ -411,10 +409,7 @@ $firstMessage = ($gender === 'female')
         return [
             'name'         => "مساعد BYD - {$botName}",
             'firstMessage' => $firstMessage,
-            'server'       => [
-                'timeoutSeconds' => 20,
-                'url'            => $_ENV['VAPI_WEBHOOK_URL'] ?? '',
-            ],
+           
             'model'        => [
                 'provider' => 'openai',
                 'model'    => 'gpt-4.1',
