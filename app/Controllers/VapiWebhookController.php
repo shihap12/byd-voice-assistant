@@ -249,10 +249,12 @@ final class VapiWebhookController
         $this->redis->extendContext($contextKey, 1800);
         $context = $this->redis->getContext($contextKey) ?? [];
 
-        $toolCalls = [];
-        if (isset($message['toolCalls']) && is_array($message['toolCalls'])) {
-            $toolCalls = $message['toolCalls'];
-        } elseif (isset($message['call']['toolCall'])) {
+$toolCalls = [];
+if (isset($message['toolCallList']) && is_array($message['toolCallList'])) {
+    $toolCalls = $message['toolCallList'];
+} elseif (isset($message['toolCalls']) && is_array($message['toolCalls'])) {
+    $toolCalls = $message['toolCalls'];
+} elseif (isset($message['call']['toolCall'])) {
             $toolCalls = [$message['call']['toolCall']];
         } elseif (isset($message['functionCall'])) {
             $toolCalls = [
