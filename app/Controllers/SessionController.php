@@ -129,12 +129,12 @@ final class SessionController
         $context['gender'] = $gender;
         $this->redis->setContext($sessionId, $context, 3600);
 
-        $vapiPublicKey   = $_ENV['VAPI_PUBLIC_KEY']    ?? (string)(getenv('VAPI_PUBLIC_KEY')    ?: 'dev-public-key');
-        $vapiAssistantId = $_ENV['VAPI_ASSISTANT_ID']  ?? (string)(getenv('VAPI_ASSISTANT_ID')  ?: '0a142edb-7150-4769-9da1-45b6751f54f6');
+        $vapiPublicKey   = $_ENV['VAPI_PUBLIC_KEY']    ?? (string)(getenv('VAPI_PUBLIC_KEY')    ?: '');
+        $vapiAssistantId = $_ENV['VAPI_ASSISTANT_ID']  ?? (string)(getenv('VAPI_ASSISTANT_ID')  ?: '');
         $vapiApiKey      = $_ENV['VAPI_API_KEY']       ?? (string)(getenv('VAPI_API_KEY')       ?: '');
 
         if (empty($vapiApiKey)) {
-            $vapiApiKey = $_ENV['VAPI_WEBHOOK_SECRET'] ?? (string)(getenv('VAPI_WEBHOOK_SECRET') ?: '098f1582-db4c-4d9c-9140-2cbf5253e926');
+            $vapiApiKey = $_ENV['VAPI_WEBHOOK_SECRET'] ?? (string)(getenv('VAPI_WEBHOOK_SECRET') ?: '');
         }
 
         // Build the full assistant config (server-side, safe to include tool server URLs)
