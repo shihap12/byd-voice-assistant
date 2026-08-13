@@ -123,7 +123,7 @@ final class SessionController
         $this->redis->setContext($sessionId, $context, 3600);
 
         // Prepare authorization parameters for the Vapi SDK
-        $vapiPublicKey  = $_ENV['VAPI_PUBLIC_KEY'] ?? 'dev-public-key';
+        $vapiPublicKey  = $_ENV['VAPI_PUBLIC_KEY'] ?? (string) (getenv('VAPI_PUBLIC_KEY') ?: 'dev-public-key');
         
         // Get the full dynamic assistant configuration from the Webhook Controller, passing gender
         $webhookController = new \BYD\Controllers\VapiWebhookController();

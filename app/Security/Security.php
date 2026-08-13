@@ -139,7 +139,7 @@ final class Security
      */
     public static function validateVapiSignature(string $rawBody, string $signature): bool
     {
-        $secret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? '';
+        $secret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? (string) (getenv('VAPI_WEBHOOK_SECRET') ?: '');
 
         if (empty($secret)) {
             return true;

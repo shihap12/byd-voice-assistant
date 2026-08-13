@@ -503,7 +503,7 @@ $firstMessage = ($gender === 'female')
 
         $tools = $this->getAvailableTools();
         $webhookUrl = self::getWebhookUrl();
-        $webhookSecret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? '';
+        $webhookSecret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? (string) (getenv('VAPI_WEBHOOK_SECRET') ?: '');
 
         return [
             'name'         => "مساعد BYD - {$botName}",
@@ -583,16 +583,25 @@ $firstMessage = ($gender === 'female')
 
     /**
      * يستخرج رابط الـ Webhook الخاص بـ Vapi ديناميكياً إذا لم يكن معرّفاً بالـ .env
+     * ملاحظة: على Render.com الـ env vars تأتي من OS environment مباشرة،
+     * لذا نستخدم getenv() كـ fallback لـ $_ENV
      */
     public static function getWebhookUrl(): string
     {
-        if (!empty($_ENV['VAPI_WEBHOOK_URL'])) {
-            return $_ENV['VAPI_WEBHOOK_URL'];
+        // 1. $_ENV (محلي / dotenv)
+        $url = $_ENV['VAPI_WEBHOOK_URL'] ?? '';
+        // 2. getenv() — يلتقط متغيرات OS environment (Render.com, Docker, etc.)
+        if (empty($url)) {
+            $url = (string) (getenv('VAPI_WEBHOOK_URL') ?: '');
+        }
+        if (!empty($url)) {
+            return $url;
         }
 
-        $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') 
-               || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') 
-               ? 'https' 
+        // 3. استنتاج تلقائي من الـ Host header (الأأمن لأنه يعكس الطلب الحالي)
+        $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on')
+               || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+               ? 'https'
                : 'http';
 
         $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '';
@@ -600,8 +609,10 @@ $firstMessage = ($gender === 'female')
             return "{$scheme}://{$host}/api/vapi/webhook";
         }
 
-        if (!empty($_ENV['APP_URL'])) {
-            return rtrim($_ENV['APP_URL'], '/') . '/api/vapi/webhook';
+        // 4. APP_URL كآخر خيار
+        $appUrl = $_ENV['APP_URL'] ?? (string) (getenv('APP_URL') ?: '');
+        if (!empty($appUrl)) {
+            return rtrim($appUrl, '/') . '/api/vapi/webhook';
         }
 
         return '';
@@ -4493,7 +4504,7 @@ $prompt .= "\n\n## رسالة الترحيب لأول تواصل مع العمي
     {
         $serverConfig = [
             'url'    => self::getWebhookUrl(),
-            'secret' => $_ENV['VAPI_WEBHOOK_SECRET'] ?? '',
+            'secret' => $_ENV['VAPI_WEBHOOK_SECRET'] ?? (string) (getenv('VAPI_WEBHOOK_SECRET') ?: ''),
         ];
 
         $tools = [
