@@ -457,7 +457,6 @@ $firstMessage = ($gender === 'female')
                         'content' => $this->buildSystemPrompt($callId, $gender),
                     ],
                 ],
-                'tools'       => $tools,
                 'temperature' => 0.2,
             ],
 
