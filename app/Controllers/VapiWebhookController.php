@@ -43,6 +43,10 @@ final class VapiWebhookController
             $rawBody   = file_get_contents('php://input');
             $signature = $_SERVER['HTTP_X_VAPI_SECRET'] ?? '';
 
+            // ── EARLY DEBUG LOG — لكشف ما إذا كانت الطلبات تصل ──
+            $earlyType = json_decode($rawBody, true)['message']['type'] ?? 'unknown';
+            error_log("[VapiWebhook][EARLY] type={$earlyType} sig=" . (empty($signature) ? 'NONE' : 'PRESENT') . " len=" . strlen($rawBody));
+
             if (!Security::validateVapiSignature($rawBody, $signature)) {
                 Security::jsonError('Invalid webhook signature', 401);
             }
