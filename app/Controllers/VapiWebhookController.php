@@ -517,13 +517,39 @@ $firstMessage = ($gender === 'female')
                 'zdrEnabled'   => false,
             ],
 
-            // ── server (بدل serverUرl القديمة) ──────────────────────
+            // ── server (بدل serverUrl القديمة) ──────────────────────
             'server' => [
-                'url'            => $_ENV['VAPI_WEBHOOK_URL'] ?? '',
+                'url'            => self::getWebhookUrl(),
                 'timeoutSeconds' => 20,
                 'secret'         => $_ENV['VAPI_WEBHOOK_SECRET'] ?? '',
             ],
         ];
+    }
+
+    /**
+     * يستخرج رابط الـ Webhook الخاص بـ Vapi ديناميكياً إذا لم يكن معرّفاً بالـ .env
+     */
+    public static function getWebhookUrl(): string
+    {
+        if (!empty($_ENV['VAPI_WEBHOOK_URL'])) {
+            return $_ENV['VAPI_WEBHOOK_URL'];
+        }
+
+        $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') 
+               || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') 
+               ? 'https' 
+               : 'http';
+
+        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '';
+        if (!empty($host)) {
+            return "{$scheme}://{$host}/api/vapi/webhook";
+        }
+
+        if (!empty($_ENV['APP_URL'])) {
+            return rtrim($_ENV['APP_URL'], '/') . '/api/vapi/webhook';
+        }
+
+        return '';
     }
 
     /**
