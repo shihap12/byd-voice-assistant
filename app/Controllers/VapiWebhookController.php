@@ -140,10 +140,17 @@ final class VapiWebhookController
 
         $this->redis->setContext($callId, $context, 1800);
 
-        // نمرر callId لبناء البرومبت — الآن chat_history موجودة بالـ context
-$this->jsonResponse([
-    'assistant' => $this->getAssistantConfig($callId, $gender)
-]);
+        // نبني الكونفيغ الكامل مع الـ System Prompt الكامل — هاد بيصير server-side فقط
+        // لأن handleAssistantRequest بتتصل فيها Vapi مباشرة على السيرفر (مش من خلال الفرونت إند)
+        $assistantConfig = $this->getAssistantConfig($callId, $gender);
+        $assistantConfig['model']['messages'] = [
+            [
+                'role'    => 'system',
+                'content' => $this->buildSystemPrompt($callId, $gender),
+            ],
+        ];
+
+        $this->jsonResponse(['assistant' => $assistantConfig]);
     }
 
     private function handleConversationStart(array $message): void
@@ -443,52 +450,48 @@ $firstMessage = ($gender === 'female')
     }
 
         $tools = $this->getAvailableTools();
+        $webhookUrl = self::getWebhookUrl();
+        $webhookSecret = $_ENV['VAPI_WEBHOOK_SECRET'] ?? '';
 
         return [
             'name'         => "مساعد BYD - {$botName}",
             'firstMessage' => $firstMessage,
             'tools'        => $tools,
             'model'        => [
-                'provider' => 'openai',
-                'model'    => 'gpt-4.1',
-                'messages' => [
+                'provider'    => 'openai',
+                'model'       => 'gpt-4.1',
+                'messages'    => [
                     [
                         'role'    => 'system',
-                        'content' => $this->buildSystemPrompt($callId, $gender),
+                        'content' => "أنتِ {$botName}، موظفة خدمة عملاء وكالة BYD للسيارات الكهربائية في فلسطين.",
                     ],
                 ],
                 'temperature' => 0.2,
             ],
 
-            // ── voice ───────────────────────────────────────────────
-            // مطابقة لبنية Vapi الفعلية: version + language "ar" (عام، مش ar-SA).
-            // ⚠️ لاحظ: speed 1.2 هو نفسه اللي كان مشتبه فيه بمشكلة التقطيع سابقاً.
-            // رجعناه هون لمطابقة الحساب الفعلي، بس هاد بالضبط اللي لازم تتحقق منه
-            // بلوحة تحكم Vapi إذا لسا في مشكلة تقطيع/تشويش بعد الدمج.
-"voice" => [
-    "model" => "eleven_turbo_v2_5",
-    "speed" => 1.1,
-    "style" => 0,
-    "voiceId" => "jAAHNNqlbAX9iWjJPEtE",
-    "provider" => "11labs",
-    "stability" => 0.4,
-    "useSpeakerBoost" => true,
-    "optimizeStreamingLatency" => 4,
-],
-            // ── transcriber ─────────────────────────────────────────
+            'voice' => [
+                'model'                    => 'eleven_turbo_v2_5',
+                'speed'                    => 1.1,
+                'style'                    => 0,
+                'voiceId'                  => 'jAAHNNqlbAX9iWjJPEtE',
+                'provider'                 => '11labs',
+                'stability'                => 0.4,
+                'useSpeakerBoost'          => true,
+                'optimizeStreamingLatency' => 4,
+            ],
+
             'transcriber' => [
-                'provider'             => 'soniox',
-                'model'                => 'stt-rt-v4',
-                'language'             => 'ar',
-                'languages'            => ['ar'],
-                'languageHintsStrict'  => true,
-                'maxEndpointDelayMs'   => 800,
-                'fallbackPlan'         => [
+                'provider'            => 'soniox',
+                'model'               => 'stt-rt-v4',
+                'language'            => 'ar',
+                'languages'           => ['ar'],
+                'languageHintsStrict' => true,
+                'maxEndpointDelayMs'  => 800,
+                'fallbackPlan'        => [
                     'autoFallback' => ['enabled' => true],
                 ],
             ],
 
-            // ── client / server messages ────────────────────────────
             'clientMessages' => [
                 'conversation-update', 'function-call', 'hang', 'model-output',
                 'speech-update', 'status-update', 'transfer-update', 'transcript',
@@ -502,13 +505,12 @@ $firstMessage = ($gender === 'female')
                 'user-interrupted', 'assistant.started',
             ],
 
-            // ── سلوك عام ─────────────────────────────────────────────
             'hipaaEnabled'               => false,
             'backgroundSound'            => 'off',
             'backgroundDenoisingEnabled' => false,
 
             'startSpeakingPlan' => [
-                'waitSeconds'             => .8,
+                'waitSeconds'             => 0.8,
                 'smartEndpointingEnabled' => 'livekit',
             ],
 
@@ -518,12 +520,11 @@ $firstMessage = ($gender === 'female')
                 'zdrEnabled'   => false,
             ],
 
-            // ── server (مع serverUrl للتوافق الكامل مع Vapi SDK) ─────
-            'serverUrl' => self::getWebhookUrl(),
+            'serverUrl' => $webhookUrl,
             'server'    => [
-                'url'            => self::getWebhookUrl(),
+                'url'            => $webhookUrl,
                 'timeoutSeconds' => 20,
-                'secret'         => $_ENV['VAPI_WEBHOOK_SECRET'] ?? '',
+                'secret'         => $webhookSecret,
             ],
         ];
     }
