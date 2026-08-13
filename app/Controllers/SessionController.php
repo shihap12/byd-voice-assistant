@@ -130,8 +130,12 @@ final class SessionController
         $this->redis->setContext($sessionId, $context, 3600);
 
         $vapiPublicKey   = $_ENV['VAPI_PUBLIC_KEY']    ?? (string)(getenv('VAPI_PUBLIC_KEY')    ?: 'dev-public-key');
-        $vapiAssistantId = $_ENV['VAPI_ASSISTANT_ID']  ?? (string)(getenv('VAPI_ASSISTANT_ID')  ?: '');
+        $vapiAssistantId = $_ENV['VAPI_ASSISTANT_ID']  ?? (string)(getenv('VAPI_ASSISTANT_ID')  ?: '0a142edb-7150-4769-9da1-45b6751f54f6');
         $vapiApiKey      = $_ENV['VAPI_API_KEY']       ?? (string)(getenv('VAPI_API_KEY')       ?: '');
+
+        if (empty($vapiApiKey)) {
+            $vapiApiKey = $_ENV['VAPI_WEBHOOK_SECRET'] ?? (string)(getenv('VAPI_WEBHOOK_SECRET') ?: '098f1582-db4c-4d9c-9140-2cbf5253e926');
+        }
 
         // Build the full assistant config (server-side, safe to include tool server URLs)
         $webhookController = new \BYD\Controllers\VapiWebhookController();
@@ -188,6 +192,50 @@ final class SessionController
         $url  = "https://api.vapi.ai/assistant/{$assistantId}";
         $body = json_encode($config, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
+        // Try cURL first if available (standard & reliable on Render Linux)
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_CUSTOMREQUEST  => 'PATCH',
+                CURLOPT_POSTFIELDS     => $body,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 10,
+                CURLOPT_HTTPHEADER     => [
+                    "Authorization: Bearer {$apiKey}",
+                    'Content-Type: application/json',
+                    'Accept: application/json',
+                ],
+            ]);
+
+            $result   = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr  = curl_error($ch);
+            curl_close($ch);
+
+            if ($result === false) {
+                return [false, "cURL error: {$curlErr}"];
+            }
+
+            if ($httpCode >= 200 && $httpCode < 300) {
+                error_log("[SessionController] Vapi assistant updated successfully via cURL (HTTP {$httpCode})");
+                return [true, null];
+            }
+
+            $decoded = json_decode((string)$result, true);
+            $errMsg  = $decoded['message'] ?? $decoded['error'] ?? $result;
+            return [false, "HTTP {$httpCode}: {$errMsg}"];
+        }
+
+        // Stream context fallback
+        $caFile = __DIR__ . '/../../cacert.pem';
+        $sslOpts = [
+            'verify_peer'      => true,
+            'verify_peer_name' => true,
+        ];
+        if (file_exists($caFile)) {
+            $sslOpts['cafile'] = $caFile;
+        }
+
         $opts = [
             'http' => [
                 'method'  => 'PATCH',
@@ -198,14 +246,10 @@ final class SessionController
                     'Content-Length: ' . strlen($body),
                 ]),
                 'content' => $body,
-                'timeout' => 8,
+                'timeout' => 10,
                 'ignore_errors' => true,
             ],
-            'ssl' => [
-                'verify_peer'      => true,
-                'cafile'           => __DIR__ . '/../../cacert.pem',
-                'verify_peer_name' => true,
-            ],
+            'ssl' => $sslOpts,
         ];
 
         $ctx    = stream_context_create($opts);
@@ -225,7 +269,7 @@ final class SessionController
         }
 
         if ($httpCode >= 200 && $httpCode < 300) {
-            error_log("[SessionController] Vapi assistant updated successfully (HTTP {$httpCode})");
+            error_log("[SessionController] Vapi assistant updated successfully via stream (HTTP {$httpCode})");
             return [true, null];
         }
 
