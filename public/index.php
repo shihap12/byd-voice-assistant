@@ -85,8 +85,11 @@ header('X-Frame-Options: DENY');
 header('X-XSS-Protection: 1; mode=block');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 
-// 4. Global rate limiting
-Security::checkRateLimit(Security::getClientIp());
+// 4. Global rate limiting (exempt /api/vapi/webhook to prevent blocking Vapi tool calls)
+$requestUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '';
+if ($requestUri !== '/api/vapi/webhook') {
+    Security::checkRateLimit(Security::getClientIp());
+}
 
 // 5. Auth middleware
 \BYD\Security\AuthMiddleware::handle($_SERVER['REQUEST_METHOD'], $_SERVER['REQUEST_URI']);

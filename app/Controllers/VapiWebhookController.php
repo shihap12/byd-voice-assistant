@@ -43,26 +43,38 @@ final class VapiWebhookController
             $rawBody   = file_get_contents('php://input');
             $signature = $_SERVER['HTTP_X_VAPI_SECRET'] ?? '';
 
+            $payload = json_decode($rawBody, true);
+            if (!is_array($payload)) {
+                Security::jsonError('Invalid payload', 400);
+            }
+
+            // Normalization: Vapi can send payload wrapped in 'message' or raw at root
+            $message = (isset($payload['message']) && is_array($payload['message'])) ? $payload['message'] : $payload;
+            $type    = $message['type'] ?? $payload['type'] ?? '';
+
+            // If type is empty, infer from toolCall / toolCalls / functionCall structures
+            if (empty($type)) {
+                if (!empty($message['toolCalls']) || !empty($message['toolCallList']) || !empty($message['toolCall'])
+                    || !empty($payload['toolCalls']) || !empty($payload['toolCallList']) || !empty($payload['toolCall'])) {
+                    $type = 'tool-calls';
+                } elseif (!empty($message['functionCall']) || !empty($payload['functionCall'])) {
+                    $type = 'function-call';
+                }
+            }
+
             // ── EARLY DEBUG LOG — لكشف ما إذا كانت الطلبات تصل ──
-            $earlyType = json_decode($rawBody, true)['message']['type'] ?? 'unknown';
-            error_log("[VapiWebhook][EARLY] type={$earlyType} sig=" . (empty($signature) ? 'NONE' : 'PRESENT') . " len=" . strlen($rawBody));
+            error_log("[VapiWebhook][EARLY] type={$type} sig=" . (empty($signature) ? 'NONE' : 'PRESENT') . " len=" . strlen($rawBody));
 
             if (!Security::validateVapiSignature($rawBody, $signature)) {
                 Security::jsonError('Invalid webhook signature', 401);
             }
 
-            $payload = json_decode($rawBody, true);
-            if (!$payload || !isset($payload['message']['type'])) {
-                Security::jsonError('Invalid payload', 400);
-            }
-
-            $message = $payload['message'];
-            $type    = $message['type'];
-
             // الـ idempotency لازم تنطبق فقط على أحداث دورة حياة المكالمة
             // (conversation-start, status-update, end-of-call-report...)
             // وليس على tool calls — لازم يترد عليها كل مرة مهما تكررت
-            $skipIdempotency = in_array($type, ['function-call', 'tool-calls'], true);
+            $skipIdempotency = in_array($type, ['function-call', 'function_call', 'tool-calls', 'tool-call', 'tool_calls', 'tool_call'], true)
+                || !empty($message['toolCalls']) || !empty($message['toolCallList']) || !empty($message['toolCall']) || !empty($message['functionCall'])
+                || !empty($payload['toolCalls']) || !empty($payload['toolCallList']) || !empty($payload['toolCall']) || !empty($payload['functionCall']);
 
             if (!$skipIdempotency) {
                 $eventId = $payload['id'] ?? $message['id'] ?? null;
@@ -85,10 +97,14 @@ final class VapiWebhookController
                 'conversation-start' => $this->handleConversationStart($message),
                 'status-update'      => $this->handleStatusUpdate($message),
                 'transcript'         => $this->handleTranscript($message),
-                'function-call'      => $this->handleFunctionCall($message, $payload),
-                'tool-calls'         => $this->handleFunctionCall($message, $payload),
+                'function-call',
+                'function_call',
+                'tool-calls',
+                'tool-call',
+                'tool_calls',
+                'tool_call'          => $this->handleFunctionCall($message, $payload),
                 'end-of-call-report' => $this->handleEndOfCall($message),
-                default              => $this->jsonResponse(['result' => 'ignored']),
+                default              => $this->handleDefaultEvent($type, $message, $payload),
             };
         } catch (\Throwable $e) {
             error_log("[VapiWebhook] FATAL EXCEPTION: " . $e->getMessage() . " | file=" . $e->getFile() . ":" . $e->getLine());
@@ -98,10 +114,26 @@ final class VapiWebhookController
                                ?? $payload['message']['toolCalls'][0]['id']
                                ?? $payload['message']['toolCallList'][0]['toolCallId']
                                ?? $payload['message']['toolCallList'][0]['id']
+                               ?? $payload['toolCalls'][0]['toolCallId']
+                               ?? $payload['toolCalls'][0]['id']
+                               ?? $payload['toolCallList'][0]['toolCallId']
+                               ?? $payload['toolCallList'][0]['id']
                                ?? '';
             echo json_encode(['results' => [['toolCallId' => $fallbackToolCallId, 'result' => 'صار خلل تقني مؤقت، ممكن تعيد سؤالك؟']]], JSON_UNESCAPED_UNICODE);
             exit;
         }
+    }
+
+    private function handleDefaultEvent(string $type, array $message, array $payload): void
+    {
+        // If tool calls exist in payload despite an unknown event type, process them!
+        if (!empty($message['toolCalls']) || !empty($message['toolCallList']) || !empty($message['toolCall']) || !empty($message['functionCall'])
+            || !empty($payload['toolCalls']) || !empty($payload['toolCallList']) || !empty($payload['toolCall']) || !empty($payload['functionCall'])) {
+            $this->handleFunctionCall($message, $payload);
+            return;
+        }
+
+        $this->jsonResponse(['result' => 'ignored']);
     }
 
 
@@ -291,8 +323,20 @@ final class VapiWebhookController
                     ]
                 ]
             ];
+        } elseif (!empty($payload['functionCall'])) {
+            $toolCalls = [
+                [
+                    'id' => $payload['functionCall']['id'] ?? $payload['functionCall']['toolCallId'] ?? 'legacy',
+                    'function' => [
+                        'name' => $payload['functionCall']['name'] ?? '',
+                        'arguments' => $payload['functionCall']['parameters'] ?? $payload['functionCall']['arguments'] ?? []
+                    ]
+                ]
+            ];
         } elseif (!empty($message['toolCall'])) {
             $toolCalls = [$message['toolCall']];
+        } elseif (!empty($payload['toolCall'])) {
+            $toolCalls = [$payload['toolCall']];
         }
 
         if (empty($toolCalls)) {
@@ -305,6 +349,10 @@ final class VapiWebhookController
                          ?? $toolCall['id']
                          ?? $toolCall['toolCall']['id']
                          ?? $toolCall['toolCall']['toolCallId']
+                         ?? $message['toolCallId']
+                         ?? $message['id']
+                         ?? $payload['toolCallId']
+                         ?? $payload['id']
                          ?? '';
 
             $functionName = $toolCall['function']['name']
