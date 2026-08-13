@@ -517,8 +517,9 @@ $firstMessage = ($gender === 'female')
                 'zdrEnabled'   => false,
             ],
 
-            // ── server (بدل serverUrl القديمة) ──────────────────────
-            'server' => [
+            // ── server (مع serverUrl للتوافق الكامل مع Vapi SDK) ─────
+            'serverUrl' => self::getWebhookUrl(),
+            'server'    => [
                 'url'            => self::getWebhookUrl(),
                 'timeoutSeconds' => 20,
                 'secret'         => $_ENV['VAPI_WEBHOOK_SECRET'] ?? '',
