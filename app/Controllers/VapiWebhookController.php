@@ -442,10 +442,12 @@ $firstMessage = ($gender === 'female')
 
     }
 
+        $tools = $this->getAvailableTools();
+
         return [
             'name'         => "مساعد BYD - {$botName}",
             'firstMessage' => $firstMessage,
-           
+            'tools'        => $tools,
             'model'        => [
                 'provider' => 'openai',
                 'model'    => 'gpt-4.1',
@@ -455,7 +457,7 @@ $firstMessage = ($gender === 'female')
                         'content' => $this->buildSystemPrompt($callId, $gender),
                     ],
                 ],
-                'tools'       => $this->getAvailableTools(),
+                'tools'       => $tools,
                 'temperature' => 0.2,
             ],
 
@@ -4437,7 +4439,12 @@ $prompt .= "\n\n## رسالة الترحيب لأول تواصل مع العمي
      */
     public function getAvailableTools(): array
     {
-        return [
+        $serverConfig = [
+            'url'    => self::getWebhookUrl(),
+            'secret' => $_ENV['VAPI_WEBHOOK_SECRET'] ?? '',
+        ];
+
+        $tools = [
             [
                 'type' => 'function',
                 'function' => [
@@ -4902,6 +4909,11 @@ $prompt .= "\n\n## رسالة الترحيب لأول تواصل مع العمي
 
             
         ];
+
+        return array_map(static function (array $tool) use ($serverConfig): array {
+            $tool['server'] = $serverConfig;
+            return $tool;
+        }, $tools);
     }
 
     /**

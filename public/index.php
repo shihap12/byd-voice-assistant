@@ -98,6 +98,11 @@ $router->add('POST', '/api/vapi/webhook', function (): void {
     (new VapiWebhookController())->handle();
 });
 
+$router->add('GET', '/api/vapi/webhook', function (): void {
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'ok', 'service' => 'BYD Voice Assistant Vapi Webhook']);
+});
+
 $router->add('POST', '/api/init-session', function (): void {
     (new \BYD\Controllers\SessionController())->initSession();
 });
