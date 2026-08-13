@@ -456,7 +456,6 @@ $firstMessage = ($gender === 'female')
         return [
             'name'         => "مساعد BYD - {$botName}",
             'firstMessage' => $firstMessage,
-            'tools'        => $tools,
             'model'        => [
                 'provider'    => 'openai',
                 'model'       => 'gpt-4.1',
@@ -466,6 +465,7 @@ $firstMessage = ($gender === 'female')
                         'content' => "أنتِ {$botName}، موظفة خدمة عملاء وكالة BYD للسيارات الكهربائية في فلسطين.",
                     ],
                 ],
+                'tools'       => $tools,
                 'temperature' => 0.2,
             ],
 
