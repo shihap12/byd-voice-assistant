@@ -304,11 +304,11 @@ if (isset($message['toolCallList']) && is_array($message['toolCallList'])) {
         $this->redis->setContext($callId, $context, 1800);
 
         $type = $message['type'] ?? '';
-        if ($type === 'function-call') {
-            $this->jsonResponse(['result' => $results[0]['result'] ?? '']);
-        } else {
-            $this->jsonResponse(['results' => $results]);
-        }
+        $response = [
+            'results' => $results,
+            'result'  => $results[0]['result'] ?? ''
+        ];
+        $this->jsonResponse($response);
     }
 
     private function handleEndOfCall(array $message): void
