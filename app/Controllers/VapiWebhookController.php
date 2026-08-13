@@ -81,8 +81,8 @@ final class VapiWebhookController
                 'conversation-start' => $this->handleConversationStart($message),
                 'status-update'      => $this->handleStatusUpdate($message),
                 'transcript'         => $this->handleTranscript($message),
-                'function-call'      => $this->handleFunctionCall($message),
-                'tool-calls'         => $this->handleFunctionCall($message),
+                'function-call'      => $this->handleFunctionCall($message, $payload),
+                'tool-calls'         => $this->handleFunctionCall($message, $payload),
                 'end-of-call-report' => $this->handleEndOfCall($message),
                 default              => $this->jsonResponse(['result' => 'ignored']),
             };
@@ -238,9 +238,9 @@ $this->jsonResponse([
         $this->jsonResponse(['status' => 'transcript_handled']);
     }
 
-    private function handleFunctionCall(array $message): void
+    private function handleFunctionCall(array $message, array $payload = []): void
     {
-        $call = $message['call'] ?? [];
+        $call = $message['call'] ?? $payload['call'] ?? [];
         $callId = $call['id'] ?? '';
         
         // Find session ID
@@ -255,30 +255,58 @@ $this->jsonResponse([
         $this->redis->extendContext($contextKey, 1800);
         $context = $this->redis->getContext($contextKey) ?? [];
 
-$toolCalls = [];
-if (isset($message['toolCallList']) && is_array($message['toolCallList'])) {
-    $toolCalls = $message['toolCallList'];
-} elseif (isset($message['toolCalls']) && is_array($message['toolCalls'])) {
-    $toolCalls = $message['toolCalls'];
-} elseif (isset($message['call']['toolCall'])) {
+        $toolCalls = [];
+        if (!empty($message['toolCallList']) && is_array($message['toolCallList'])) {
+            $toolCalls = $message['toolCallList'];
+        } elseif (!empty($message['toolCalls']) && is_array($message['toolCalls'])) {
+            $toolCalls = $message['toolCalls'];
+        } elseif (!empty($message['toolWithToolCallList']) && is_array($message['toolWithToolCallList'])) {
+            $toolCalls = $message['toolWithToolCallList'];
+        } elseif (!empty($payload['toolCallList']) && is_array($payload['toolCallList'])) {
+            $toolCalls = $payload['toolCallList'];
+        } elseif (!empty($payload['toolCalls']) && is_array($payload['toolCalls'])) {
+            $toolCalls = $payload['toolCalls'];
+        } elseif (!empty($message['call']['toolCall'])) {
             $toolCalls = [$message['call']['toolCall']];
-        } elseif (isset($message['functionCall'])) {
+        } elseif (!empty($message['call']['toolCalls']) && is_array($message['call']['toolCalls'])) {
+            $toolCalls = $message['call']['toolCalls'];
+        } elseif (!empty($message['functionCall'])) {
             $toolCalls = [
                 [
-                    'id' => $message['functionCall']['id'] ?? 'legacy',
+                    'id' => $message['functionCall']['id'] ?? $message['functionCall']['toolCallId'] ?? 'legacy',
                     'function' => [
                         'name' => $message['functionCall']['name'] ?? '',
-                        'arguments' => $message['functionCall']['parameters'] ?? []
+                        'arguments' => $message['functionCall']['parameters'] ?? $message['functionCall']['arguments'] ?? []
                     ]
                 ]
             ];
+        } elseif (!empty($message['toolCall'])) {
+            $toolCalls = [$message['toolCall']];
+        }
+
+        if (empty($toolCalls)) {
+            error_log("[VapiWebhook] [handleFunctionCall] WARNING: toolCalls empty in payload! Raw message: " . json_encode($message, JSON_UNESCAPED_UNICODE));
         }
 
         $results = [];
         foreach ($toolCalls as $toolCall) {
-            $toolCallId   = $toolCall['toolCallId'] ?? $toolCall['id'] ?? '';
-            $functionName = $toolCall['function']['name'] ?? $toolCall['name'] ?? '';
-            $arguments    = $toolCall['function']['arguments'] ?? $toolCall['arguments'] ?? [];
+            $toolCallId   = $toolCall['toolCallId']
+                         ?? $toolCall['id']
+                         ?? $toolCall['toolCall']['id']
+                         ?? $toolCall['toolCall']['toolCallId']
+                         ?? '';
+
+            $functionName = $toolCall['function']['name']
+                         ?? $toolCall['name']
+                         ?? $toolCall['toolCall']['function']['name']
+                         ?? $toolCall['toolCall']['name']
+                         ?? '';
+
+            $arguments    = $toolCall['function']['arguments']
+                         ?? $toolCall['arguments']
+                         ?? $toolCall['toolCall']['function']['arguments']
+                         ?? $toolCall['toolCall']['arguments']
+                         ?? [];
 
             if (is_string($arguments)) {
                 $arguments = json_decode($arguments, true) ?? [];
@@ -1793,14 +1821,25 @@ private function requestSpecialistContact(array $params, string $callId, array &
     {
         $cacheKey = 'car:all_models';
         $cached   = $this->redis->get($cacheKey);
-        if (is_array($cached)) {
+        if (is_array($cached) && !empty($cached['models'])) {
             return $cached;
         }
 
         $models = $this->carModel->getAllModels();
-        $result = ['models' => $models];
-        // تم تقليل وقت التكييش لـ 60 ثانية بدل ساعة عشان التعديلات في الداتا بيس تظهر فوراً
-        $this->redis->set($cacheKey, $result, 60);
+        $names  = array_column($models, 'model_name');
+
+        $result = [
+            'success' => true,
+            'models'  => $models,
+            'count'   => count($models),
+            'message' => !empty($names)
+                ? 'الموديلات المتاحة هي: ' . implode('، ', $names)
+                : 'لا توجد موديلات متاحة حالياً',
+        ];
+
+        if (!empty($models)) {
+            $this->redis->set($cacheKey, $result, 60);
+        }
 
         return $result;
     }
