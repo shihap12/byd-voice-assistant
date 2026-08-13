@@ -96,6 +96,13 @@ final class SessionController
      * POST /api/vapi-auth
      *
      * Protected by AuthMiddleware. Grants permission to start Vapi call.
+     *
+     * Strategy: Vapi strips server.url from tools when a web call is started
+     * from the browser (security restriction). To work around this, we update
+     * the saved Vapi Assistant via Vapi Management API (server-side) with the
+     * latest webhook URL and tool configs, then return just the assistantId to
+     * the frontend. Frontend calls vapi.start(assistantId) which uses the
+     * server-stored config, preserving all tool server URLs.
      */
     public function authorizeVapi(): void
     {
@@ -122,22 +129,109 @@ final class SessionController
         $context['gender'] = $gender;
         $this->redis->setContext($sessionId, $context, 3600);
 
-        // Prepare authorization parameters for the Vapi SDK
-        $vapiPublicKey  = $_ENV['VAPI_PUBLIC_KEY'] ?? (string) (getenv('VAPI_PUBLIC_KEY') ?: 'dev-public-key');
-        
-        // Get the full dynamic assistant configuration from the Webhook Controller, passing gender
-        $webhookController = new \BYD\Controllers\VapiWebhookController();
-        $assistantConfig = $webhookController->getAssistantConfig($sessionId, $gender);
+        $vapiPublicKey   = $_ENV['VAPI_PUBLIC_KEY']    ?? (string)(getenv('VAPI_PUBLIC_KEY')    ?: 'dev-public-key');
+        $vapiAssistantId = $_ENV['VAPI_ASSISTANT_ID']  ?? (string)(getenv('VAPI_ASSISTANT_ID')  ?: '');
+        $vapiApiKey      = $_ENV['VAPI_API_KEY']       ?? (string)(getenv('VAPI_API_KEY')       ?: '');
 
-        header('Content-Type: application/json');
-        echo json_encode([
-            'success'         => true,
-            'publicKey'       => $vapiPublicKey,
-            'sessionId'       => $sessionId,
-            'status'          => 'authorized',
-            'assistantConfig' => $assistantConfig
-        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        // Build the full assistant config (server-side, safe to include tool server URLs)
+        $webhookController = new \BYD\Controllers\VapiWebhookController();
+        $assistantConfig   = $webhookController->getAssistantConfig($sessionId, $gender);
+
+        // ── Update the saved Vapi assistant via Vapi Management API ──────────
+        // This is the key fix: we push the config (including tool server URLs)
+        // server-side. The frontend will only use assistantId, so Vapi reads
+        // the server-saved config with all URLs intact.
+        $updateSuccess = false;
+        $updateError   = null;
+        if (!empty($vapiAssistantId) && !empty($vapiApiKey)) {
+            [$updateSuccess, $updateError] = $this->updateVapiAssistant(
+                $vapiAssistantId, $vapiApiKey, $assistantConfig
+            );
+        }
+
+        if ($updateSuccess) {
+            // ✅ Return assistantId — frontend uses vapi.start(assistantId)
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success'         => true,
+                'publicKey'       => $vapiPublicKey,
+                'sessionId'       => $sessionId,
+                'status'          => 'authorized',
+                'assistantId'     => $vapiAssistantId,   // ← frontend uses this
+                'assistantConfig' => null,               // ← not needed anymore
+            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        } else {
+            // ⚠️ Fallback: return full config (tool URLs will be stripped by Vapi,
+            //    but at least the assistant will start with the correct system prompt)
+            error_log("[SessionController] Vapi assistant update failed: {$updateError} — falling back to full config");
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success'         => true,
+                'publicKey'       => $vapiPublicKey,
+                'sessionId'       => $sessionId,
+                'status'          => 'authorized',
+                'assistantId'     => null,
+                'assistantConfig' => $assistantConfig,
+            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        }
         exit;
+    }
+
+    /**
+     * Update the Vapi assistant via Vapi Management API (PATCH /assistant/{id}).
+     * Pushes the full config including tool server URLs server-side.
+     *
+     * @return array{bool, string|null}  [success, error_message]
+     */
+    private function updateVapiAssistant(string $assistantId, string $apiKey, array $config): array
+    {
+        $url  = "https://api.vapi.ai/assistant/{$assistantId}";
+        $body = json_encode($config, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        $opts = [
+            'http' => [
+                'method'  => 'PATCH',
+                'header'  => implode("\r\n", [
+                    "Authorization: Bearer {$apiKey}",
+                    'Content-Type: application/json',
+                    'Accept: application/json',
+                    'Content-Length: ' . strlen($body),
+                ]),
+                'content' => $body,
+                'timeout' => 8,
+                'ignore_errors' => true,
+            ],
+            'ssl' => [
+                'verify_peer'      => true,
+                'cafile'           => __DIR__ . '/../../cacert.pem',
+                'verify_peer_name' => true,
+            ],
+        ];
+
+        $ctx    = stream_context_create($opts);
+        $result = @file_get_contents($url, false, $ctx);
+
+        if ($result === false) {
+            return [false, 'HTTP request failed'];
+        }
+
+        $httpCode = 0;
+        if (!empty($http_response_header)) {
+            foreach ($http_response_header as $h) {
+                if (preg_match('#HTTP/\S+\s+(\d+)#', $h, $m)) {
+                    $httpCode = (int)$m[1];
+                }
+            }
+        }
+
+        if ($httpCode >= 200 && $httpCode < 300) {
+            error_log("[SessionController] Vapi assistant updated successfully (HTTP {$httpCode})");
+            return [true, null];
+        }
+
+        $decoded = json_decode($result, true);
+        $errMsg  = $decoded['message'] ?? $decoded['error'] ?? $result;
+        return [false, "HTTP {$httpCode}: {$errMsg}"];
     }
 
     /**

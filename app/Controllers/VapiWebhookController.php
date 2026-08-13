@@ -514,7 +514,7 @@ $firstMessage = ($gender === 'female')
                 'messages'    => [
                     [
                         'role'    => 'system',
-                        'content' => "أنتِ {$botName}، موظفة خدمة عملاء وكالة BYD للسيارات الكهربائية في فلسطين.",
+                        'content' => $this->buildSystemPrompt($callId, $gender),
                     ],
                 ],
                 'tools'       => $tools,
@@ -578,6 +578,10 @@ $firstMessage = ($gender === 'female')
                 'timeoutSeconds' => 20,
                 'secret'         => $webhookSecret,
             ],
+
+            'voicemailMessage' => '',
+            'endCallMessage'   => '',
+            'endCallPhrases'   => ['goodbye', 'talk to you soon'],
         ];
     }
 
