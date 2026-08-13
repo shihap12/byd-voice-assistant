@@ -90,7 +90,12 @@ final class VapiWebhookController
             error_log("[VapiWebhook] FATAL EXCEPTION: " . $e->getMessage() . " | file=" . $e->getFile() . ":" . $e->getLine());
             http_response_code(200); // إلزامي: 200 مش 500 عشان Vapi يقبل الرد كـ نتيجة صحيحة
             header('Content-Type: application/json');
-            echo json_encode(['results' => [['toolCallId' => '', 'result' => 'صار خلل تقني مؤقت، ممكن تعيد سؤالك؟']]], JSON_UNESCAPED_UNICODE);
+            $fallbackToolCallId = $payload['message']['toolCalls'][0]['toolCallId']
+                               ?? $payload['message']['toolCalls'][0]['id']
+                               ?? $payload['message']['toolCallList'][0]['toolCallId']
+                               ?? $payload['message']['toolCallList'][0]['id']
+                               ?? '';
+            echo json_encode(['results' => [['toolCallId' => $fallbackToolCallId, 'result' => 'صار خلل تقني مؤقت، ممكن تعيد سؤالك؟']]], JSON_UNESCAPED_UNICODE);
             exit;
         }
     }
@@ -271,9 +276,9 @@ if (isset($message['toolCallList']) && is_array($message['toolCallList'])) {
 
         $results = [];
         foreach ($toolCalls as $toolCall) {
-            $toolCallId   = $toolCall['id'] ?? '';
-            $functionName = $toolCall['function']['name'] ?? '';
-            $arguments    = $toolCall['function']['arguments'] ?? [];
+            $toolCallId   = $toolCall['toolCallId'] ?? $toolCall['id'] ?? '';
+            $functionName = $toolCall['function']['name'] ?? $toolCall['name'] ?? '';
+            $arguments    = $toolCall['function']['arguments'] ?? $toolCall['arguments'] ?? [];
 
             if (is_string($arguments)) {
                 $arguments = json_decode($arguments, true) ?? [];
