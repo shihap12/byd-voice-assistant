@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+// ─── Request Entry Logging (Diagnosis) ────────────────────────────────────────
+error_log("[HTTP_REQUEST] " . ($_SERVER['REQUEST_METHOD'] ?? 'GET') . " " . ($_SERVER['REQUEST_URI'] ?? '/'));
+// ──────────────────────────────────────────────────────────────────────────────
+
 /**
  * BYD Voice Assistant - Entry Point (IMPROVED VERSION)
  *
