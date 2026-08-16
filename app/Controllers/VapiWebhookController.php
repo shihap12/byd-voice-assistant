@@ -527,10 +527,13 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             ],
 
             'transcriber' => [
-    'provider' => 'xai',
-    'model'    => 'default',
-    'language' => 'ar',
-    'fallbackPlan' => [
+    'provider'            => 'gladia',
+    'model'               => 'fast',
+    'language'            => 'ar',
+    'audioEnhancer'       => false,
+    'confidenceThreshold' => 0.4,
+    'prosody'             => false,
+    'fallbackPlan'        => [
         'autoFallback' => ['enabled' => true],
     ],
 ],
@@ -550,7 +553,7 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
 
             'hipaaEnabled'               => false,
             'backgroundSound'            => 'off',
-            'backgroundDenoisingEnabled' => false,
+            'backgroundDenoisingEnabled' => true,
 
             'startSpeakingPlan' => [
     'waitSeconds'          => 0.8,
