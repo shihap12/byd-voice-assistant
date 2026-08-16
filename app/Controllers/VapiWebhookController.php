@@ -527,8 +527,8 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             ],
 
             'transcriber' => [
-    'provider' => 'cartesia',
-    'model'    => 'ink-whisper',
+    'provider' => 'xai',
+    'model'    => 'default',
     'language' => 'ar',
     'fallbackPlan' => [
         'autoFallback' => ['enabled' => true],
