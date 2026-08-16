@@ -553,7 +553,7 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
 
             'hipaaEnabled'               => false,
             'backgroundSound'            => 'off',
-            'backgroundDenoisingEnabled' => true,
+            'backgroundDenoisingEnabled' => false,
 
             'startSpeakingPlan' => [
     'waitSeconds'          => 0.8,
