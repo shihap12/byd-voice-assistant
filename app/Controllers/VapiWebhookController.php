@@ -527,12 +527,12 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             ],
 
             'transcriber' => [
-    'provider'            => 'gladia',
-    'model'               => 'fast',
+    'provider'            => 'soniox',
+    'model'               => 'stt-rt-v5',
     'language'            => 'ar',
-    'audioEnhancer'       => false,
-    'confidenceThreshold' => 0.4,
-    'prosody'             => false,
+    'languages'           => ['ar'],
+    'languageHintsStrict' => true,
+    'maxEndpointDelayMs'  => 500,
     'fallbackPlan'        => [
         'autoFallback' => ['enabled' => true],
     ],
@@ -556,8 +556,8 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             'backgroundDenoisingEnabled' => false,
 
             'startSpeakingPlan' => [
-    'waitSeconds'          => 0.8,
-    'smartEndpointingPlan' => ['provider' => 'vapi'],
+    'waitSeconds'             => 0.8,
+    'smartEndpointingEnabled' => 'livekit',
 ],
 
             'compliancePlan' => [
