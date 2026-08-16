@@ -527,16 +527,13 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             ],
 
             'transcriber' => [
-                'provider'            => 'soniox',
-                'model'               => 'stt-rt-v4',
-                'language'            => 'ar',
-                'languages'           => ['ar'],
-                'languageHintsStrict' => true,
-                'maxEndpointDelayMs'  => 800,
-                'fallbackPlan'        => [
-                    'autoFallback' => ['enabled' => true],
-                ],
-            ],
+    'provider' => 'cartesia',
+    'model'    => 'ink-whisper',
+    'language' => 'ar',
+    'fallbackPlan' => [
+        'autoFallback' => ['enabled' => true],
+    ],
+],
 
             'clientMessages' => [
                 'conversation-update', 'function-call', 'hang', 'model-output',
@@ -556,9 +553,9 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             'backgroundDenoisingEnabled' => false,
 
             'startSpeakingPlan' => [
-                'waitSeconds'             => 0.8,
-                'smartEndpointingEnabled' => 'livekit',
-            ],
+    'waitSeconds'          => 0.8,
+    'smartEndpointingPlan' => ['provider' => 'vapi'],
+],
 
             'compliancePlan' => [
                 'hipaaEnabled' => false,
