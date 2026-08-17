@@ -1006,6 +1006,23 @@ private function normalizeAppointmentTime(string $time): string
 
     return $time;
 }
+/**
+ * تضيف date_spoken/time_spoken لأي suggestion راجع من findNearestAvailableSlot
+ * (appointment أو visit)، عشان الموديل ما يضطرش يخترع نطق الوقت بنفسه.
+ */
+private function withSpokenSuggestion(?array $suggestion): ?array
+{
+    if (empty($suggestion)) {
+        return $suggestion;
+    }
+    if (!empty($suggestion['date']) && empty($suggestion['date_spoken'])) {
+        $suggestion['date_spoken'] = ArabicPronunciationService::dateToWords($suggestion['date']);
+    }
+    if (!empty($suggestion['time']) && empty($suggestion['time_spoken'])) {
+        $suggestion['time_spoken'] = ArabicPronunciationService::timeToWords($suggestion['time']);
+    }
+    return $suggestion;
+}
 
 /**
  * check_appointment_availability
@@ -1020,8 +1037,6 @@ private function checkAppointmentAvailability(array $params): array
 {
     $date = trim((string) ($params['preferred_date'] ?? ''));
     $time = $this->normalizeAppointmentTime((string) ($params['preferred_time'] ?? ''));
-    
-    
 
     if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         return ['success' => false, 'error' => 'INVALID_DATE'];
@@ -1035,7 +1050,6 @@ private function checkAppointmentAvailability(array $params): array
     $nowTime = date('H:i');
     $maxDate = date('Y-m-d', strtotime($today . " +{$hours['days_ahead']} days"));
 
-    // جلب كل المواعيد المتاحة لليوم المذكور لتضمينها في الرد
     $freeSlots = $this->appointmentModel->getFreeSlotsForDate($date);
     if ($date === $today) {
         $nowMin = ((int) date('H')) * 60 + ((int) date('i'));
@@ -1053,7 +1067,7 @@ private function checkAppointmentAvailability(array $params): array
             'success'    => false,
             'error'      => 'TIME_PASSED',
             'free_slots' => $freeSlots,
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1070,7 +1084,7 @@ private function checkAppointmentAvailability(array $params): array
         return [
             'success'    => false,
             'error'      => 'CLOSED_DAY',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time !== '' ? $time : null),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time !== '' ? $time : null)),
         ];
     }
 
@@ -1081,7 +1095,7 @@ private function checkAppointmentAvailability(array $params): array
                 'error'         => 'OUTSIDE_WORKING_HOURS',
                 'working_hours' => $hours,
                 'free_slots'    => $freeSlots,
-                'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+                'suggestion'    => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time)),
             ];
         }
 
@@ -1101,16 +1115,15 @@ private function checkAppointmentAvailability(array $params): array
             'success'    => true,
             'available'  => false,
             'free_slots' => $freeSlots,
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
-    // ما انذكر وقت محدد — رجعي المواعيد الفاضية واقتراح لأقرب موعد
     return [
         'success'    => true,
         'available'  => !empty($freeSlots),
         'free_slots' => $freeSlots,
-        'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date),
+        'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date)),
     ];
 }
 
@@ -1155,7 +1168,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1163,7 +1176,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
         return [
             'success'    => false,
             'error'      => 'INVALID_DAY',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot(max($date, $today), $time),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot(max($date, $today), $time)),
         ];
     }
 
@@ -1171,11 +1184,10 @@ private function bookAppointment(array $params, string $callId, array &$context)
         return [
             'success'    => false,
             'error'      => 'OUTSIDE_WORKING_HOURS',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
-    // فحص أخير لحظة الحجز — منعاً لتعارض لحظي بين الفحص والتأكيد
     $__tb1 = microtime(true);
     $isFree = $this->appointmentModel->isSlotFree($date, $time, $hours['slot_minutes']);
     error_log("[TIMING] isSlotFree=" . round((microtime(true)-$__tb1)*1000) . "ms");
@@ -1183,7 +1195,7 @@ private function bookAppointment(array $params, string $callId, array &$context)
         return [
             'success'    => false,
             'error'      => 'SLOT_TAKEN',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1204,9 +1216,6 @@ private function bookAppointment(array $params, string $callId, array &$context)
 
     \BYD\Models\RedisClient::getInstance()->delete('cache:admin:appointments');
 
-    // ─── حفظ اسم العميل الكامل في customers تلقائياً ─────────────────
-    // لما يحجز عميل على الواتساب، نحدّث اسمه في جدول customers عشان
-    // يكون الاسم معروف في الجلسات القادمة ومش يضطر يكتبه مرة ثانية.
     if ($this->channel === 'whatsapp') {
         try {
             $db = \BYD\Models\Database::getInstance();
@@ -1215,7 +1224,6 @@ private function bookAppointment(array $params, string $callId, array &$context)
                 [$cleanName, $normalizedPhone]
             );
         } catch (\Throwable) {
-            // non-critical — don't fail the booking
         }
         $context['customer_name']  = $cleanName;
         $context['customer_phone'] = $normalizedPhone;
@@ -1313,7 +1321,6 @@ private function rescheduleAppointment(array $params, string $callId): array
         return ['success' => false, 'error' => 'INVALID_DATETIME'];
     }
 
-    // تحقق من وجود الموعد
     $appt = $this->appointmentModel->findById($apptId);
     if (!$appt || $appt['status'] !== 'scheduled') {
         return ['success' => false, 'error' => 'APPOINTMENT_NOT_FOUND'];
@@ -1328,7 +1335,7 @@ private function rescheduleAppointment(array $params, string $callId): array
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($newDate, $newTime),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($newDate, $newTime)),
         ];
     }
 
@@ -1336,7 +1343,7 @@ private function rescheduleAppointment(array $params, string $callId): array
         return [
             'success'    => false,
             'error'      => 'INVALID_DAY',
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot(max($newDate, $today), $newTime),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot(max($newDate, $today), $newTime)),
         ];
     }
 
@@ -1345,19 +1352,17 @@ private function rescheduleAppointment(array $params, string $callId): array
             'success'       => false,
             'error'         => 'OUTSIDE_WORKING_HOURS',
             'working_hours' => $hours,
-            'suggestion'    => $this->appointmentModel->findNearestAvailableSlot($newDate, $newTime),
+            'suggestion'    => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($newDate, $newTime)),
         ];
     }
 
-    // احسب السلوتات المتاحة لليوم المطلوب (مع استبعاد الموعد الحالي مؤقتاً من الحساب)
     if (!$this->appointmentModel->isSlotFree($newDate, $newTime, $hours['slot_minutes'])) {
-        // السلوت مأخوذ من موعد آخر (مش الموعد الحالي نفسه)
         $freeSlots = $this->appointmentModel->getFreeSlotsForDate($newDate);
         return [
             'success'    => false,
             'error'      => 'SLOT_TAKEN',
             'free_slots' => array_slice($freeSlots, 0, 6),
-            'suggestion' => $this->appointmentModel->findNearestAvailableSlot($newDate, $newTime),
+            'suggestion' => $this->withSpokenSuggestion($this->appointmentModel->findNearestAvailableSlot($newDate, $newTime)),
         ];
     }
 
@@ -1373,9 +1378,11 @@ private function rescheduleAppointment(array $params, string $callId): array
         'success'     => true,
         'status'      => 'rescheduled',
         'appointment' => [
-            'id'   => (string) $apptId,
-            'date' => $newDate,
-            'time' => $newTime,
+            'id'          => (string) $apptId,
+            'date'        => $newDate,
+            'time'        => $newTime,
+            'date_spoken' => ArabicPronunciationService::dateToWords($newDate),
+            'time_spoken' => ArabicPronunciationService::timeToWords($newTime),
         ],
     ];
 }
@@ -1457,7 +1464,7 @@ private function checkVisitAvailability(array $params): array
             'success'    => false,
             'error'      => 'TIME_PASSED',
             'free_slots' => $freeSlots,
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1474,7 +1481,7 @@ private function checkVisitAvailability(array $params): array
         return [
             'success'    => false,
             'error'      => 'CLOSED_DAY',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time !== '' ? $time : null),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time !== '' ? $time : null)),
         ];
     }
 
@@ -1485,7 +1492,7 @@ private function checkVisitAvailability(array $params): array
                 'error'         => 'OUTSIDE_WORKING_HOURS',
                 'working_hours' => $hours,
                 'free_slots'    => $freeSlots,
-                'suggestion'    => $this->visitModel->findNearestAvailableSlot($date, $time),
+                'suggestion'    => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time)),
             ];
         }
 
@@ -1505,7 +1512,7 @@ private function checkVisitAvailability(array $params): array
             'success'    => true,
             'available'  => false,
             'free_slots' => $freeSlots,
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1513,7 +1520,7 @@ private function checkVisitAvailability(array $params): array
         'success'    => true,
         'available'  => !empty($freeSlots),
         'free_slots' => $freeSlots,
-        'suggestion' => $this->visitModel->findNearestAvailableSlot($date),
+        'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date)),
     ];
 }
 
@@ -1549,7 +1556,7 @@ private function bookVisit(array $params, string $callId, array &$context): arra
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1557,7 +1564,7 @@ private function bookVisit(array $params, string $callId, array &$context): arra
         return [
             'success'    => false,
             'error'      => 'INVALID_DAY',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot(max($date, $today), $time),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot(max($date, $today), $time)),
         ];
     }
 
@@ -1565,7 +1572,7 @@ private function bookVisit(array $params, string $callId, array &$context): arra
         return [
             'success'    => false,
             'error'      => 'OUTSIDE_WORKING_HOURS',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1573,7 +1580,7 @@ private function bookVisit(array $params, string $callId, array &$context): arra
         return [
             'success'    => false,
             'error'      => 'SLOT_TAKEN',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($date, $time),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($date, $time)),
         ];
     }
 
@@ -1695,7 +1702,7 @@ private function rescheduleVisit(array $params, string $callId): array
         return [
             'success'    => false,
             'error'      => 'TIME_PASSED',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($newDate, $newTime),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($newDate, $newTime)),
         ];
     }
 
@@ -1703,7 +1710,7 @@ private function rescheduleVisit(array $params, string $callId): array
         return [
             'success'    => false,
             'error'      => 'INVALID_DAY',
-            'suggestion' => $this->visitModel->findNearestAvailableSlot(max($newDate, $today), $newTime),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot(max($newDate, $today), $newTime)),
         ];
     }
 
@@ -1712,7 +1719,7 @@ private function rescheduleVisit(array $params, string $callId): array
             'success'       => false,
             'error'         => 'OUTSIDE_WORKING_HOURS',
             'working_hours' => $hours,
-            'suggestion'    => $this->visitModel->findNearestAvailableSlot($newDate, $newTime),
+            'suggestion'    => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($newDate, $newTime)),
         ];
     }
 
@@ -1722,7 +1729,7 @@ private function rescheduleVisit(array $params, string $callId): array
             'success'    => false,
             'error'      => 'SLOT_TAKEN',
             'free_slots' => array_slice($freeSlots, 0, 6),
-            'suggestion' => $this->visitModel->findNearestAvailableSlot($newDate, $newTime),
+            'suggestion' => $this->withSpokenSuggestion($this->visitModel->findNearestAvailableSlot($newDate, $newTime)),
         ];
     }
 
@@ -1736,7 +1743,13 @@ private function rescheduleVisit(array $params, string $callId): array
     return [
         'success' => true,
         'status'  => 'rescheduled',
-        'visit'   => ['id' => (string) $visitId, 'date' => $newDate, 'time' => $newTime],
+        'visit'   => [
+            'id'          => (string) $visitId,
+            'date'        => $newDate,
+            'time'        => $newTime,
+            'date_spoken' => ArabicPronunciationService::dateToWords($newDate),
+            'time_spoken' => ArabicPronunciationService::timeToWords($newTime),
+        ],
     ];
 }
 
@@ -3248,7 +3261,7 @@ note_text: نص الملاحظة بس، ممنوع تحطي الاسم أو ال
 1. اسألي العميل عن اليوم والوقت اللي بناسبه. حوّلي أي تاريخ نسبي (بكرة، بعد بكرة، يوم الحد الجاي...) لتاريخ فعلي بصيغة YYYY-MM-DD بالاعتماد حصراً على تاريخ اليوم المذكور فوق — ما تحسبي من عندك.
 2. استخدمي check_appointment_availability بالتاريخ (والوقت لو انذكر) قبل أي تأكيد أو وعد للعميل.
 3. إذا رجعت available: true → أكدي مع العميل التاريخ والوقت بجملة وحدة واضحة، وبعد موافقته الصريحة استخدمي book_appointment بنفس القيم بالضبط.
-4. إذا رجعت available: false مع suggestion → اقترحي على العميل الموعد البديل بأسلوب طبيعي، متل: "هاد الوقت مش متاح، بس أقرب موعد فاضي إلي هو يوم [التاريخ] الساعة [الوقت]، بيناسبك؟". ممنوع تحجزي إلا بعد موافقته الصريحة على الموعد البديل بالذات.
+4. إذا رجعت available: false مع suggestion → اقترحي على العميل الموعد البديل. استخدمي حرفياً suggestion.date_spoken و suggestion.time_spoken بدون أي حساب أو نطق من عندك، بنفس القالب الثابت التالي بدون أي تغيير أو إضافة كلمات: "هاد الوقت مش متاح، بس أقرب موعد فاضي إلي هو [date_spoken] الساعة [time_spoken]، بيناسبك؟" — ممنوع أي كلمة زيادة زي "قلّي" أو أي صياغة بديلة، القالب دايماً بنفس الترتيب والكلمات هاي بالظبط. ممنوع تحجزي إلا بعد موافقته الصريحة على الموعد البديل بالذات.
 5. إذا رفض العميل الموعد البديل، اسأليه عن يوم أو وقت تاني وكرري من الخطوة 2.
 6. بعد ما ياخد العميل قرار نهائي بيوم ووقت محددين، خدي منه اسمه الثلاثي ورقم جواله (إلا إذا كانوا موجودين مسبقاً بنفس المكالمة من ملاحظة أو حجز سابق)، وبعدين استخدمي book_appointment.
 **قاعدة إلزامية:** لما نتيجة أي أداة (check_appointment_availability, book_appointment) بترجع حقل date_spoken أو time_spoken، استخدمي هاد النص حرفياً متل ما هو لما تحكي التاريخ/الوقت للعميل — ممنوع تحسبي النطق بنفسك أو تستخدمي القيمة الخام (date/time).
