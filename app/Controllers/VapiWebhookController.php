@@ -503,8 +503,8 @@ public function getAssistantConfig(string $callId, string $gender = 'male'): arr
             'name'         => "مساعد BYD - {$botName}",
             'firstMessage' => $firstMessage,
             'model'        => [
-                'provider'    => 'anthropic',
-                'model'       => 'claude-haiku-4-5-20251001',
+                'provider'    => 'openai',
+                'model'       => 'gpt-5',
                 'messages'    => [
                     [
                         'role'    => 'system',
