@@ -145,39 +145,20 @@ final class SessionController
         // This is the key fix: we push the config (including tool server URLs)
         // server-side. The frontend will only use assistantId, so Vapi reads
         // the server-saved config with all URLs intact.
-        $updateSuccess = false;
-        $updateError   = null;
-        if (!empty($vapiAssistantId) && !empty($vapiApiKey)) {
-            [$updateSuccess, $updateError] = $this->updateVapiAssistant(
-                $vapiAssistantId, $vapiApiKey, $assistantConfig
-            );
-        }
+        
 
-        if ($updateSuccess) {
-            // ✅ Return assistantId — frontend uses vapi.start(assistantId)
-            header('Content-Type: application/json');
-            echo json_encode([
-                'success'         => true,
-                'publicKey'       => $vapiPublicKey,
-                'sessionId'       => $sessionId,
-                'status'          => 'authorized',
-                'assistantId'     => $vapiAssistantId,   // ← frontend uses this
-                'assistantConfig' => null,               // ← not needed anymore
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        } else {
-            // ⚠️ Fallback: return full config (tool URLs will be stripped by Vapi,
-            //    but at least the assistant will start with the correct system prompt)
-            error_log("[SessionController] Vapi assistant update failed: {$updateError} — falling back to full config");
-            header('Content-Type: application/json');
-            echo json_encode([
-                'success'         => true,
-                'publicKey'       => $vapiPublicKey,
-                'sessionId'       => $sessionId,
-                'status'          => 'authorized',
-                'assistantId'     => null,
-                'assistantConfig' => $assistantConfig,
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        }
+        // كل جلسة بترجّع الكونفيغ الكامل الخاص فيها فقط — ممنوع الاعتماد على
+        // PATCH لـ assistant واحد مشترك بين كل المستخدمين (كان بيسبب تسرب
+        // بيانات الجلسة زي الجندر بين مستخدمين مختلفين بسبب race condition).
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success'         => true,
+            'publicKey'       => $vapiPublicKey,
+            'sessionId'       => $sessionId,
+            'status'          => 'authorized',
+            'assistantId'     => null,
+            'assistantConfig' => $assistantConfig,
+        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
         exit;
     }
 
